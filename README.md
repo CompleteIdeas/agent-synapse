@@ -1,5 +1,7 @@
 # AgentSynapse
 
+> **Preview** — This project is in active development with known bugs. It works well for our workflows but isn't production-ready for general use yet. Feedback, issues, and ideas are welcome. If you're looking for the stable memory system (works standalone without AgentSynapse), see [AgentWorkingMemory](https://github.com/CompleteIdeas/agent-working-memory).
+
 **Multi-agent orchestration with persistent memory for Claude Code.**
 
 AgentSynapse is a framework for running multiple Claude Code agents in parallel — with shared memory, coordinated task assignment, file locking, and autonomous orchestration. It combines two core systems:
