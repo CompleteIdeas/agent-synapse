@@ -1,0 +1,18 @@
+{
+  "_comment": "Service discovery and mode config for AgentSynapse.",
+  "mode": "full",
+  "mode_options": ["full", "solo_orchestrator", "solo_dev"],
+  "allow_degraded": false,
+  "services": {
+    "coordinator": "http://127.0.0.1:8410",
+    "memory": "http://127.0.0.1:8400",
+    "task_manager": "http://127.0.0.1:8420"
+  },
+  "stale_threshold_seconds": 120,
+  "stale_auto_cleanup": true,
+  "loop": {
+    "tick_seconds": 180,
+    "watchdog_seconds": 420,
+    "stale_tick_seconds": 240
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "name": "agent-synapse",
+  "version": "0.1.0",
+  "description": "Multi-agent orchestration with persistent memory for Claude Code",
+  "type": "module",
+  "bin": {
+    "agent-synapse": "bin/synapse.js"
+  },
+  "scripts": {
+    "dev": "node packages/memory/dist/index.js & node packages/coordinator/dist/index.js & node packages/task-manager/dist/index.js",
+    "dev:memory": "npx tsx packages/memory/src/index.ts",
+    "dev:coordinator": "npx tsx packages/coordinator/src/index.ts",
+    "dev:task-manager": "npx tsx packages/task-manager/src/index.ts",
+    "build": "npx -p typescript tsc -p packages/memory && npx -p typescript tsc -p packages/coordinator && npx -p typescript tsc -p packages/task-manager",
+    "prepare": "npm run build || echo build skipped"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "ai-agents",
+    "multi-agent",
+    "orchestration",
+    "memory",
+    "claude",
+    "claude-code",
+    "mcp",
+    "cognitive-memory",
+    "awm"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "better-sqlite3": "^12.6.2",
+    "fastify": "^5.8.2",
+    "zod": "^4.3.6"
+  },
+  "optionalDependencies": {
+    "@huggingface/transformers": "^3.8.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  },
+  "author": "Robert Gregg",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CompleteIdeas/agent-synapse.git"
+  },
+  "homepage": "https://github.com/CompleteIdeas/agent-synapse#readme",
+  "bugs": {
+    "url": "https://github.com/CompleteIdeas/agent-synapse/issues"
+  }
+}

@@ -1,0 +1,26 @@
+# Only exclude things we definitely don't want in the package
+node_modules/
+.claude/
+.git/
+data/
+*.db
+*.sqlite
+orchestrator_state.json
+coordination.db
+TASK-*.md
+
+# ML models (too large for npm)
+packages/memory/models/
+*.safetensors
+*.onnx
+*.pt
+
+# Test files
+packages/memory/tests/
+packages/coordinator/tests/
+packages/task-manager/tests/
+**/*.test.ts
+**/*.spec.ts
+
+# Docs (not needed for runtime)
+docs/

@@ -1,0 +1,43 @@
+services:
+  memory:
+    build: packages/memory
+    ports: ["127.0.0.1:8400:8400"]
+    volumes: ["./data:/data", "./models:/models"]
+    environment:
+      AWM_DB_PATH: /data/memory.db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8400/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  coordinator:
+    build: packages/coordinator
+    ports: ["127.0.0.1:8410:8410"]
+    volumes: ["./data:/data"]
+    environment:
+      COORD_DB: /data/coord.db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8410/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  task-manager:
+    build: packages/task-manager
+    ports: ["127.0.0.1:8420:8420"]
+    volumes: ["./data:/data"]
+    environment:
+      TM_DB_PATH: /data/task.db
+      TM_API_KEY: ${TM_API_KEY:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8420/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3

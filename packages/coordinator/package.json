@@ -1,0 +1,23 @@
+{
+  "name": "@agent-synapse/coordinator",
+  "version": "0.1.0",
+  "description": "Multi-agent coordination service — dispatch, file locks, heartbeats, worker discovery",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.6.2",
+    "fastify": "^5.8.2",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
