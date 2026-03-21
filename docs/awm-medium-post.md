@@ -14,11 +14,15 @@ Then the project got big.
 
 I was rebuilding a legacy system — a 20-year-old codebase, roughly 1.4 million lines — into a modern platform. 88 database tables, a multi-sprint plan, and I'd started running multiple Claude Code agents in parallel to move faster.
 
-Every morning, same ritual. Open a fresh session. Re-explain the architecture. Re-explain the database schema. Re-explain what I decided last week and why. By the time the agent had enough context to be useful, I'd spent ten minutes and a significant chunk of my context window just catching it up on things it already knew twelve hours ago.
+Every morning, same ritual. Open a fresh session. Wait while the agent reads source files, digs through git history, and pieces together what the project is about. It's resourceful — it'll figure it out. But it costs something.
 
-[SCREENSHOT: A fresh Claude Code session where you're re-explaining project context — the "before" state]
+To test this, I started a session with memory completely disabled (AWM has an incognito mode — `AWM_INCOGNITO=1` — that registers zero memory tools, so Claude has nothing to recall). I asked it about the database schema, the architecture decisions, and what I was working on last time. It spent about **3 minutes and ~3,000 tokens** reading files and git logs to reconstruct context it would have had instantly with memory. For "what was I working on last session?" it resorted to scanning git commit history — a reasonable workaround, but a poor substitute for actually remembering.
 
-Claude Code has tools that help. You can resume a previous conversation with `--continue`. There's a built-in auto-memory that saves notes about your preferences. You can write a `CLAUDE.md` file with project instructions that loads every session.
+[SCREENSHOT: Incognito session — Claude spending time/tokens reading files and git history to reconstruct project context]
+
+That's the tax you pay every session without persistent memory. Claude isn't helpless — it's just doing archaeology when it could be doing engineering.
+
+Claude Code has tools that help with this. You can resume a previous conversation with `--continue`. There's a built-in auto-memory that saves notes about your preferences. You can write a `CLAUDE.md` file with project instructions that loads every session.
 
 But each has limits that showed up fast at scale:
 
@@ -50,6 +54,10 @@ Restart Claude Code, and 14 memory tools appear. That's the whole install.
 From that point on, the agent writes memories when it discovers something important, recalls relevant context when starting new work, and checkpoints its state so it can recover after interruptions. You don't manage any of it.
 
 ## What makes it different
+
+With AWM enabled, I asked the same questions. The agent ran `memory_restore`, recalled relevant context in seconds, and was ready to work immediately. Same questions that took 3 minutes and 3K tokens in incognito — answered instantly from 5-10 targeted memories. No file reading. No git archaeology.
+
+[SCREENSHOT: Normal session — memory_restore followed by instant recall of the same questions, with relevance scores visible]
 
 The difference between AWM and a notes file isn't the storage. It's what happens around the storage.
 
@@ -137,7 +145,7 @@ awm setup --global
 
 First run downloads about 124MB of ML models (cached locally after that). Everything runs on your machine.
 
-There are a bunch of features I didn't get into here — incognito mode, task tracking, memory supersession, execution checkpoints that survive context compaction. A lot of the "yeah but what about..." problems that came up during real usage have been addressed. Check the [GitHub repo](https://github.com/CompleteIdeas/agent-working-memory) for the full picture.
+There are a bunch of features I didn't get into here — incognito mode (set `AWM_INCOGNITO=1` and memory completely disappears — zero tools, no reads, no writes, like I used for the "before" screenshots above), task tracking, memory supersession, execution checkpoints that survive context compaction. A lot of the "yeah but what about..." problems that came up during real usage have been addressed. Check the [GitHub repo](https://github.com/CompleteIdeas/agent-working-memory) for the full picture.
 
 It's open source under Apache 2.0. I'm not sure if the approach is truly novel — there are smart people working on agent memory from a lot of angles. But it's been a genuine game changer for my workflow, and I figured it was worth putting out there.
 
