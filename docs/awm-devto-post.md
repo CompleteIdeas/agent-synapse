@@ -29,11 +29,11 @@ Claude Code has some tools for this now. You can resume a previous conversation 
 
 These are useful. But they have limits:
 
-**Resuming a conversation** restores one chat thread. Start a new session and that knowledge is gone. The context window fills up with old messages fast.
+**Resuming a conversation** (`--continue` / `--resume`) restores a previous chat thread — messages, tool calls, everything. But you can only resume one thread at a time, and all that old conversation history eats your context window. The knowledge isn't gone, but it's trapped in a single thread that gets more expensive to carry forward with every exchange.
 
-**Auto-memory** saves simple text notes — build commands, your preferences, debugging patterns. But it loads the same notes every session regardless of what you're working on. There's no way for it to know that your auth middleware notes are relevant right now but your CSS patterns aren't. And it caps at about 200 lines before things stop loading.
+**Auto-memory** saves text notes about things Claude learns — build commands, your preferences, debugging patterns. It loads the first 200 lines of its index file (`MEMORY.md`) at session start, and Claude can read deeper topic files on demand. But there's no retrieval intelligence — it doesn't know which notes are relevant to what you're working on right now. And the notes don't strengthen, decay, or connect to each other over time.
 
-**Project docs** (CLAUDE.md) work great for stable information — project setup, coding conventions, architecture rules. But they go stale. They contradict each other. You become the one maintaining the agent's memory, and that's a second job.
+**Project docs** (`CLAUDE.md`) work great for stable information — project setup, coding conventions, architecture rules. But when you're maintaining multiple docs or the project evolves fast, they go stale. You become the one maintaining the agent's memory, and that's a second job.
 
 What I needed was something that could **accumulate knowledge across sessions, surface the right context for whatever I'm working on right now, and get better over time without me managing it.**
 
@@ -41,7 +41,7 @@ So I built [AgentWorkingMemory](https://github.com/CompleteIdeas/agent-working-m
 
 ## What It Does
 
-AWM lives entirely on your machine — a SQLite database, three small ML models, and a Node.js process. There's no server to run, no Docker container, no background daemon to manage. When you start Claude Code, it automatically spins up AWM through MCP (Model Context Protocol). When you close the session, it stops. Nothing is running when you're not using it. Everything stays local — no cloud, no API keys, no data leaving your machine. If you want an extra layer of security, AWM supports bearer token auth so you can lock down access to the memory API.
+AWM lives entirely on your machine — a SQLite database, three local ML models (~124MB total, downloaded once), and a Node.js process. There's no server to run, no Docker container, no background daemon to manage. When you start Claude Code, it automatically spins up AWM through MCP (Model Context Protocol). When you close the session, it stops. Nothing is running when you're not using it. Everything stays local — no cloud, no API keys, no data leaving your machine. If you want an extra layer of security, AWM supports bearer token auth so you can lock down access to the memory API.
 
 The setup is two commands:
 
@@ -50,7 +50,7 @@ npm install -g agent-working-memory
 awm setup --global
 ```
 
-Restart Claude Code and 13 memory tools appear automatically. The first session takes about 30 seconds while the ML models download (~124MB, cached after that). From that point on, the agent writes memories when it learns something important, recalls relevant memories when starting new work, and checkpoints its state so it can recover after interruptions. You don't start anything, configure anything, or manage anything — it activates when Claude Code does and the data is there waiting between sessions.
+Restart Claude Code and 14 memory tools appear automatically. The first session takes about 30 seconds while the ML models download (~124MB, cached after that). From that point on, the agent writes memories when it learns something important, recalls relevant memories when starting new work, and checkpoints its state so it can recover after interruptions. You don't start anything, configure anything, or manage anything — it activates when Claude Code does and the data is there waiting between sessions.
 
 One database can hold multiple isolated memory pools — work projects and personal projects don't bleed into each other, different agent teams can have their own namespace, and you control the boundaries with a single environment variable. There are a bunch of smaller features like this (incognito mode, task tracking, memory supersession, execution checkpoints) that I won't get into here, but the point is: a lot of the "yeah but what about..." problems that came up during real usage have been addressed.
 
@@ -60,7 +60,7 @@ What makes it different from a notes file or a simple database:
 
 **It retrieves intelligently.** When the agent asks "what do I know about the payment system?", it doesn't load a flat file. It runs a multi-stage pipeline — keyword matching, semantic search, a reranking model that judges passage-level relevance, then walks an association graph to find related memories that weren't in the original query. The right context surfaces for the current task.
 
-**It forms connections.** When two memories get recalled together repeatedly, they form a stronger link. Over time, thinking about "user registration" automatically pulls in "email validation" and "onboarding flow" — because those topics were previously relevant together. These connections emerge from usage, not from someone manually linking notes.
+**It forms connections.** When two memories get recalled together, a link strengthens between them. Over time, this means recalling one topic can surface related memories that weren't in the original query — not because someone manually linked them, but because they were previously relevant in the same context. The associations take time to build and depend on your usage patterns, but the graph gets richer the more you use it.
 
 **It forgets on purpose.** Unused memories fade over time. Important ones that keep getting accessed stay strong. You don't tag things as important — the system figures it out from how often they come back. This keeps the memory pool lean instead of growing forever.
 
@@ -84,8 +84,8 @@ I queried my actual SQLite database to see what's really happening. These aren't
 
 - **225 active memories** — not thousands. The salience filter rejected about 30% of what the agent tried to store (routine observations, near-duplicates, low-value noise). Consolidation archived another handful. A bigger or older project would have more, but the filtering keeps the pool from growing unbounded.
 - **2,818 associative connections** between memories — these form automatically. When two memories get recalled together, a link strengthens between them. Nobody designs this graph. It emerges from how the agent actually uses the knowledge. Over 21 consolidation cycles, cross-topic bridges formed, weak links decayed, and hub nodes got normalized so no single memory dominates retrieval.
-- **Most-used memory accessed 86 times** — it's a foundational architecture decision that's relevant to almost every session. The temporal decay model (based on ACT-R from cognitive science) means this memory is essentially permanent now — each access resets the decay clock. Meanwhile, a one-off debugging note from two weeks ago that was never recalled again is quietly fading toward archive.
-- **64.5% fewer tokens** — this is the hidden power of the system and worth explaining. Without AWM, you'd either paste a big context document every session (expensive, often stale) or use `--continue` which loads your entire previous conversation history (very expensive, full of irrelevant back-and-forth). AWM replaces both with *targeted recall* — when the agent starts a task, it recalls only the 5-10 memories most relevant to that specific work. An architecture decision, a related bug fix, a naming convention. Not your entire conversation from yesterday. Not a 500-line project document. Just the signal, no noise. That's where the token savings come from — you're spending context window budget on precisely the knowledge that matters for what you're doing right now, instead of loading everything and hoping the model can find what it needs in a wall of text.
+- **Most-used memory accessed 86 times** — it's a foundational architecture decision that's relevant to almost every session. The temporal decay model (based on ACT-R from cognitive science) means this memory is essentially permanent — each access adds another activation trace that strengthens it against decay. Meanwhile, a one-off debugging note from two weeks ago that was never recalled again is quietly fading toward archive.
+- **64.5% fewer tokens** (from our eval suite comparing memory-guided context vs full conversation history) — this is the hidden power of the system and worth explaining. Without AWM, you'd either paste a big context document every session (expensive, often stale) or use `--continue` which loads your entire previous conversation history (very expensive, full of irrelevant back-and-forth). AWM replaces both with *targeted recall* — when the agent starts a task, it recalls only the 5-10 memories most relevant to that specific work. An architecture decision, a related bug fix, a naming convention. Not your entire conversation from yesterday. Not a 500-line project document. Just the signal, no noise. That's where the token savings come from — you're spending context window budget on precisely the knowledge that matters for what you're doing right now, instead of loading everything and hoping the model can find what it needs in a wall of text.
 
 ## Multiple Agents, Multiple Tools
 
@@ -93,17 +93,15 @@ This is where it gets interesting. I run multiple AI agents in parallel — one 
 
 When one agent discovers a bug or an undocumented constraint, it writes that to memory. When a different agent starts working on something related an hour later, it picks up that knowledge automatically. No copy-pasting between sessions. No shared docs to maintain. Knowledge propagates through the team.
 
-And it's not locked to Claude Code. AWM has an HTTP API that any tool can call — other AI assistants, CI pipelines, scripts, custom agents. Your memory travels with your project, not your IDE.
+And it's not locked to Claude Code. AWM can also run as a standalone HTTP server (`awm serve`) with an API that any tool can call — other AI assistants, CI pipelines, scripts, custom agents. Your memory travels with your project, not your IDE.
 
 ## Beyond Code: Other Applications
 
 The same problem — AI that forgets everything between sessions — shows up anywhere you're doing complex, long-running work with an AI assistant.
 
-**Creative writing** is a perfect example. An author working on a thriller with 20 characters, interconnected backstories, planted clues, and timeline twists faces exactly this challenge. The AI needs to remember that Sarah has brown eyes, that the detective's partner has a gambling debt that becomes relevant in chapter 18, that the red scarf mentioned in chapter 3 is the murder weapon revealed in chapter 22.
+**Creative writing** is one I keep thinking about. I was talking with an author recently who described exactly the frustration I had with code — their AI assistant would forget character details mid-book, contradict established backstory, and lose track of which clues had been planted where. The more complex the story, the worse it got.
 
-With AWM, character details, plot threads, and foreshadowing form an associative graph. When the agent writes a scene with a character, it automatically recalls their backstory, their relationships, and the plot threads they're connected to. Planted clues form associations with their payoffs. The "who knew what when" timeline stays consistent without the author maintaining a massive spreadsheet.
-
-I talked to an author recently who described exactly this frustration — their AI assistant would forget character details mid-book, contradict established backstory, and lose track of which clues had been planted where. The more complex the story, the worse it got. That's the same problem I had with code, just in a different domain.
+I haven't tested AWM with fiction writing yet, but the mechanics seem like a natural fit. Character details, plot threads, and foreshadowing could form an associative graph — so when the agent writes a scene with a character, it would recall their backstory and relationships. Planted clues would form connections with their eventual payoffs. The "who knew what when" timeline could stay consistent without maintaining a massive spreadsheet. That's the theory, anyway — I'd love to hear from anyone who tries it.
 
 Any field where context accumulates over time — research, legal work, game design, worldbuilding — could benefit from AI that actually remembers.
 
