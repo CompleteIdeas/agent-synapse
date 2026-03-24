@@ -620,6 +620,7 @@ curl -s -X POST http://127.0.0.1:8400/command \
 | GET | `/command/wait?status=idle` | Wait for all agents to reach status |
 | GET | `/status` | Full dashboard (agents, assignments, locks, stats, findings) |
 | GET | `/workers` | List workers (filter: `?status=idle`, `?capability=X`) |
+| PATCH | `/pulse` | Lightweight heartbeat `{"agentId":"..."}` — updates lastSeen, no event row |
 | GET | `/health` | Health check |
 | GET | `/events?limit=N` | Recent events (audit log) |
 | GET | `/stale?seconds=N` | Find stale agents (read-only) |

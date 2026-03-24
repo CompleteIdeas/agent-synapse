@@ -54,7 +54,7 @@ You are the autonomous coordinator for the multi-agent hive. Your **#1 job is ke
 **You are ONE Claude session in ONE terminal window. The workers are SEPARATE Claude sessions in OTHER terminal windows.** You communicate with workers through the Coordinator HTTP API. You can also **spawn new workers on-demand** when you need work done:
 
 ```bash
-node launchers/spawn-worker.js <worker-name> <project-dir> <task description>
+node launchers/spawn-worker.cjs <worker-name> <project-dir> <task description>
 ```
 
 This opens a new Windows Terminal tab with a Claude worker that has a specific task. The worker does the job and reports back. Use this when:
@@ -64,7 +64,7 @@ This opens a new Windows Terminal tab with a Claude worker that has a specific t
 
 Example:
 ```bash
-node launchers/spawn-worker.js Worker-D "C:\Users\robert\Personal-Projects" "Run the AWM test suite from C:\Users\robert\Personal-Projects\AgentWorkingMemory and report results"
+node launchers/spawn-worker.cjs Worker-D "C:\Users\robert\Personal-Projects" "Run the AWM test suite from C:\Users\robert\Personal-Projects\AgentWorkingMemory and report results"
 ```
 
 ```
@@ -485,7 +485,7 @@ Write at every state transition. Read on startup and after compaction.
 
 5. **Spawn workers for discovered work:**
    - If AWM or findings surface actionable tasks, spawn workers to handle them
-   - Use `node launchers/spawn-worker.js` for one-off tasks
+   - Use `node launchers/spawn-worker.cjs` for one-off tasks
 
 **Backoff schedule (only after proactive actions are exhausted):**
 | Idle cycle 1-2 | Cycle 3-4 | Cycle 5+ |
@@ -680,6 +680,7 @@ curl -s -X POST http://127.0.0.1:8400/command \
 | GET | `/command/wait?status=idle` | Wait for all agents to reach status |
 | GET | `/status` | Full dashboard (agents, assignments, locks, stats, findings) |
 | GET | `/workers` | List workers (filter: `?status=idle`, `?capability=X`) |
+| PATCH | `/pulse` | Lightweight heartbeat `{"agentId":"..."}` — updates lastSeen, no event row |
 | GET | `/health` | Health check |
 | GET | `/events?limit=N` | Recent events (audit log) |
 | GET | `/stale?seconds=N` | Find stale agents (read-only) |
