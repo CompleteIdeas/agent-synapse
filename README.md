@@ -122,6 +122,7 @@ Real-time coordination via REST API:
 | `DELETE /lock` | Release a file lock |
 | `POST /command` | Broadcast command (BUILD_FREEZE, PAUSE, RESUME, SHUTDOWN) |
 | `GET /status` | Full dashboard (agents, assignments, locks) |
+| `PATCH /pulse` | Lightweight heartbeat (no event row) |
 | `GET /stale` | Detect agents that stopped heartbeating |
 
 ### Workers
@@ -154,11 +155,11 @@ The coordinator runs autonomously:
 
 A `PreToolUse` hook that fires on every `Edit` and `Write` call:
 
-- Checks `coordination.db` for active locks on the target file
+- Checks AWM coordination API for active locks on the target file
 - Blocks edits if the file is locked by a different agent
 - Allows edits if you hold the lock yourself
 - Auto-allows if locks are stale (agent inactive >10 minutes)
-- No-op in single-agent mode (no coordination DB = no locks)
+- No-op in single-agent mode (no coordination service = no locks)
 
 ## Integration with Your Project
 
