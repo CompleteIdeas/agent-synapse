@@ -10,10 +10,8 @@ canonical_url:
 *Reddit intro (delete for Medium/DEV.to):*
 
 > First time posting here. I've been working with Claude Code since early access, using it to rebuild a 20-year-old codebase (~1.4 million lines) from scratch into a modern stack (estimating ~250K lines when done). A few months in, I ran into a problem I couldn't find a complete solution for — AI agents have no memory between sessions. I found a few projects tackling pieces of it, but nothing that handled the full picture: what to remember, what to forget, how to retrieve the right context, and how to share knowledge across multiple agents working in parallel.
->
+> 
 > So I built something. I'm not sure if the approach is truly novel — there are smart people working on this problem from a lot of angles, and I'm sure there are things I'm not aware of. But it's been a genuine game changer for my workflow, and I figured it was worth sharing in case anyone else is hitting the same walls. It's open source, and I'd honestly love feedback on what could be better. Happy to answer questions.
-
-
 
 ---
 
@@ -71,6 +69,7 @@ What makes it different from a notes file or a simple database:
 AWM doesn't replace Claude Code's built-in memory. It adds the layer that's missing.
 
 Think of it as a stack:
+
 - **CLAUDE.md** — your project's constitution. Always loaded, stable rules and conventions.
 - **Auto-memory** — Claude's personal notebook. Quick notes about preferences and patterns.
 - **--continue / --resume** — a tape recorder. Replay a previous conversation.
