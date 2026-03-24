@@ -40,6 +40,9 @@ coverage/
 # Embeddings cache
 embeddings-cache/
 
+# AWM (standalone external dependency — see AgentWorkingMemory project)
+packages/memory/
+
 # ML models (too large for git — download separately)
 models/
 *.safetensors
