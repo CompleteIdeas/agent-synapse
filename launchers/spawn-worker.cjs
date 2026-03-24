@@ -26,15 +26,19 @@ const synapseDir = path.resolve(__dirname, '..');
 const tmpDir = path.join(os.tmpdir(), 'agentsynapse-spawn');
 fs.mkdirSync(tmpDir, { recursive: true });
 
-// Derive WT window name from project dir (must match launch-hive.cjs WORKSPACES)
-const WORKSPACE_MAP = {
-  'C:\\Users\\robert\\Personal-Projects': 'PERSONAL',
-  'C:\\Users\\robert\\project': 'WORK',
-};
+// Derive WT window name from project dir (reads workspace config from synapse.config.json)
 const resolvedDir = path.resolve(projectDir);
-const workspaceName = WORKSPACE_MAP[resolvedDir]
-  || Object.entries(WORKSPACE_MAP).find(([k]) => resolvedDir.toLowerCase() === k.toLowerCase())?.[1]
-  || 'PERSONAL';
+let workspaceName = 'DEFAULT';
+try {
+  const config = JSON.parse(fs.readFileSync(path.join(synapseDir, 'synapse.config.json'), 'utf8'));
+  const workspaces = config.workspaces || {};
+  for (const [, ws] of Object.entries(workspaces)) {
+    if (path.resolve(ws.projectDir).toLowerCase() === resolvedDir.toLowerCase()) {
+      workspaceName = ws.name;
+      break;
+    }
+  }
+} catch { /* config read failed — use default */ }
 const wtWindowName = `AgentSynapse-${workspaceName}`;
 
 // Write temp launcher script

@@ -11,6 +11,8 @@
 const { execSync, spawn } = require('child_process');
 const path = require('path');
 
+const fs = require('fs');
+
 const SYNAPSE_DIR = path.resolve(__dirname, '..');
 
 function sleepSync(ms) {
@@ -18,29 +20,23 @@ function sleepSync(ms) {
 }
 const LAUNCHER_DIR = __dirname;
 
-const WORKSPACES = {
-  personal: {
-    name: 'PERSONAL',
-    projectDir: 'C:\\Users\\robert\\Personal-Projects',
-    agents: [
-      { name: 'coordinator', role: 'coordinator', delay: 0 },
-      { name: 'Dev-Lead', role: 'dev-lead', delay: 5 },
-      { name: 'Worker-B', role: 'worker', delay: 8 },
-      { name: 'Worker-C', role: 'worker', delay: 11 },
-    ],
-  },
-  work: {
-    name: 'WORK',
-    projectDir: 'C:\\Users\\robert\\project',
-    agents: [
-      { name: 'coordinator', role: 'coordinator', delay: 0 },
-      { name: 'Dev-Lead', role: 'dev-lead', delay: 5 },
-      { name: 'Worker-A', role: 'worker', delay: 8 },
-      { name: 'Worker-B', role: 'worker', delay: 11 },
-      { name: 'Worker-C', role: 'worker', delay: 14 },
-    ],
-  },
-};
+// Load workspace config from synapse.config.json
+const configPath = path.join(SYNAPSE_DIR, 'synapse.config.json');
+let WORKSPACES = {};
+try {
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  WORKSPACES = config.workspaces || {};
+} catch (err) {
+  console.error(`  ERROR: Cannot read ${configPath}: ${err.message}`);
+  process.exit(1);
+}
+
+if (Object.keys(WORKSPACES).length === 0) {
+  console.error('  ERROR: No workspaces defined in synapse.config.json.');
+  console.error('  Add a "workspaces" key with at least one workspace config.');
+  console.error('  Example: { "workspaces": { "personal": { "name": "PERSONAL", "projectDir": "...", "agents": [...] } } }');
+  process.exit(1);
+}
 
 function killPort8400() {
   try {
@@ -95,7 +91,6 @@ function launchHive(workspace) {
     }
 
     console.log('  Starting AWM with coordination...');
-    const fs = require('fs');
     const dataDir = path.join(SYNAPSE_DIR, 'data');
     fs.mkdirSync(dataDir, { recursive: true });
     const awmLogFd = fs.openSync(path.join(dataDir, 'awm.log'), 'a');
@@ -127,7 +122,6 @@ function launchHive(workspace) {
   console.log(`\n  Launching ${ws.agents.length} agents in Windows Terminal...\n`);
 
   // Write temp launcher scripts for each agent (avoids quoting hell in wt args)
-  const fs = require('fs');
   const os = require('os');
   const tmpDir = path.join(os.tmpdir(), 'agentsynapse-launch');
   fs.mkdirSync(tmpDir, { recursive: true });
@@ -181,34 +175,37 @@ function launchHive(workspace) {
 const arg = process.argv[2]?.toLowerCase();
 
 if (!arg) {
-  // Interactive menu
+  // Interactive menu — built from workspace config
+  const wsKeys = Object.keys(WORKSPACES);
   console.log('\n  AgentSynapse Hive Launcher');
   console.log('  ==========================\n');
-  console.log('  1. Personal  (C:\\Users\\robert\\Personal-Projects)');
-  console.log('  2. Work      (C:\\Users\\robert\\project)');
-  console.log('  3. Status');
-  console.log('  4. Shutdown\n');
+  wsKeys.forEach((key, i) => {
+    const ws = WORKSPACES[key];
+    console.log(`  ${i + 1}. ${key.charAt(0).toUpperCase() + key.slice(1).padEnd(10)} (${ws.projectDir})`);
+  });
+  console.log(`  ${wsKeys.length + 1}. Status`);
+  console.log(`  ${wsKeys.length + 2}. Shutdown\n`);
 
-  process.stdout.write('  Choice [1-4]: ');
+  process.stdout.write(`  Choice [1-${wsKeys.length + 2}]: `);
   process.stdin.setEncoding('utf8');
   process.stdin.once('data', (data) => {
-    const choice = data.trim();
-    if (choice === '1') launchHive('personal');
-    else if (choice === '2') launchHive('work');
-    else if (choice === '3') {
+    const choice = parseInt(data.trim(), 10);
+    if (choice >= 1 && choice <= wsKeys.length) {
+      launchHive(wsKeys[choice - 1]);
+    } else if (choice === wsKeys.length + 1) {
       try {
         const out = execSync('curl -s http://127.0.0.1:8400/workers', { encoding: 'utf8' });
         const j = JSON.parse(out);
         console.log(`\n  Workers: ${j.count} (${j.idle} idle, ${j.working} working)`);
         j.workers.forEach(w => console.log(`    ${w.name.padEnd(12)} ${w.status.padEnd(8)} ${w.alive ? 'alive' : 'STALE'}`));
       } catch { console.log('  Coordinator not running.'); }
-    } else if (choice === '4') {
+    } else if (choice === wsKeys.length + 2) {
       try { execSync(`"${path.join(LAUNCHER_DIR, 'shutdown.bat')}"`, { stdio: 'inherit' }); }
       catch { console.log('  Shutdown failed.'); }
     }
     process.exit(0);
   });
-} else if (arg === 'personal' || arg === 'work') {
+} else if (WORKSPACES[arg]) {
   launchHive(arg);
 } else if (arg === 'status') {
   try {
