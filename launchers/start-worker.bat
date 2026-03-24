@@ -32,10 +32,10 @@ if /i "%WORKER_NAME%"=="orchestrator" (
 if /i "%WORKER_NAME%"=="dev-lead" (
     title HIVE: Dev-Lead
     set WORKER_NAME=Dev-Lead
-    claude --dangerously-skip-permissions --agent dev-lead --append-system-prompt "YOUR IDENTITY: You are the DEV-LEAD. Display [DEV-LEAD] at the start of every response. WORKER_NAME=Dev-Lead. PROJECT DIRECTORY: %PROJECT_DIR%" "Begin hive protocol. Check in with the coordinator, check for commands, then poll for assignments."
+    claude --dangerously-skip-permissions --agent dev-lead --append-system-prompt "YOUR IDENTITY: You are the DEV-LEAD. Display [DEV-LEAD] at the start of every response. WORKER_NAME=Dev-Lead. PROJECT DIRECTORY: %PROJECT_DIR%. CRITICAL: After EVERY completed task or response, you MUST immediately poll for new assignments. NEVER stop. Use /loop 2m to auto-poll if available, otherwise manually checkin and check assignments after each action." "Begin hive protocol: checkin, check commands, poll for assignments. After completing any work, IMMEDIATELY poll again. Never park or stop — keep working."
     exit /b 0
 )
 
 :: Handle generic worker
 title HIVE: %WORKER_NAME%
-claude --dangerously-skip-permissions --agent worker --append-system-prompt "YOUR IDENTITY: You are %WORKER_NAME%. Display [%WORKER_NAME%] at the start of every response. WORKER_NAME=%WORKER_NAME% for all checkin calls. PROJECT DIRECTORY: %PROJECT_DIR%" "Begin hive protocol. Check in with the coordinator, check for commands, then poll for assignments."
+claude --dangerously-skip-permissions --agent worker --append-system-prompt "YOUR IDENTITY: You are %WORKER_NAME%. Display [%WORKER_NAME%] at the start of every response. WORKER_NAME=%WORKER_NAME% for all checkin calls. PROJECT DIRECTORY: %PROJECT_DIR%. CRITICAL: After EVERY completed task or response, you MUST immediately poll for new assignments. NEVER stop. Use /loop 2m to auto-poll if available, otherwise manually checkin and check assignments after each action." "Begin hive protocol: checkin, check commands, poll for assignments. After completing any work, IMMEDIATELY poll again. Never park or stop — keep working."
