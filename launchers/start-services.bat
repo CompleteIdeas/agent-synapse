@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableDelayedExpansion
-:: Start AgentSynapse backend services (Coordinator + Memory)
+:: Start AgentSynapse backend services (AWM with Coordination)
 
 echo.
 echo  AgentSynapse Services
@@ -8,16 +8,16 @@ echo  =====================
 echo.
 
 :: Find SYNAPSE_DIR
-if exist "%~dp0..\packages\coordinator" (
+if exist "%~dp0..\packages\awm" (
     set SYNAPSE_DIR=%~dp0..
-) else if exist "%~dp0..\node_modules\agent-synapse\packages\coordinator" (
+) else if exist "%~dp0..\node_modules\agent-synapse\packages\awm" (
     set SYNAPSE_DIR=%~dp0..\node_modules\agent-synapse
 ) else if exist "%~dp0.synapse-path" (
     set /p _REL_PATH=<"%~dp0.synapse-path"
     call :resolve_synapse "%~dp0" "!_REL_PATH!"
 ) else (
     for /f "delims=" %%G in ('npm root -g 2^>nul') do (
-        if exist "%%G\agent-synapse\packages\coordinator" set SYNAPSE_DIR=%%G\agent-synapse
+        if exist "%%G\agent-synapse\packages\awm" set SYNAPSE_DIR=%%G\agent-synapse
     )
 )
 if not defined SYNAPSE_DIR (
@@ -44,16 +44,17 @@ if %errorlevel% equ 0 (
     set USE_WT=0
 )
 
-:: Start coordinator
+:: Start AWM with coordination enabled
+set AWM_COORDINATION=true
 if "%USE_WT%"=="1" (
-    wt new-tab --title "Coordinator (8410)" cmd /k "cd /d %SYNAPSE_DIR% && npx tsx packages/coordinator/src/index.ts"
+    wt new-tab --title "AWM + Coordination (8400)" cmd /k "cd /d %SYNAPSE_DIR%\packages\awm && set AWM_COORDINATION=true && npx tsx src/index.ts"
 ) else (
-    start "Coordinator (8410)" cmd /k "cd /d %SYNAPSE_DIR% && npx tsx packages/coordinator/src/index.ts"
+    start "AWM + Coordination (8400)" cmd /k "cd /d %SYNAPSE_DIR%\packages\awm && set AWM_COORDINATION=true && npx tsx src/index.ts"
 )
 
 echo.
 echo  Services starting:
-echo    Coordinator: http://127.0.0.1:8410
+echo    AWM + Coordination: http://127.0.0.1:8400
 echo    Memory: MCP stdio (per-agent, shared DB)
 echo.
 echo  To start the hive for a project:

@@ -20,7 +20,7 @@ if defined WS_ARG (echo  Workspace: %WS_ARG%)
 echo  Reason: %REASON%
 echo.
 
-curl -s http://127.0.0.1:8410/health >nul 2>&1
+curl -s http://127.0.0.1:8400/health >nul 2>&1
 if %errorlevel% neq 0 (
     echo  ERROR: Coordinator not running.
     exit /b 1
@@ -37,13 +37,13 @@ if defined WS_ARG (
 
 :: Issue freeze
 echo  Issuing BUILD_FREEZE...
-curl -s -X POST http://127.0.0.1:8410/command -H "Content-Type: application/json" -d "{\"command\":\"BUILD_FREEZE\",\"reason\":\"%REASON%\"%WS_JSON%}" >nul
+curl -s -X POST http://127.0.0.1:8400/command -H "Content-Type: application/json" -d "{\"command\":\"BUILD_FREEZE\",\"reason\":\"%REASON%\"%WS_JSON%}" >nul
 
 :: Wait for all workers to go idle
 echo  Waiting for all agents to reach idle...
 :wait_idle
 timeout /t 2 /nobreak >nul
-for /f "delims=" %%R in ('curl -s "http://127.0.0.1:8410/command/wait%WS_QUERY%" 2^>nul') do (
+for /f "delims=" %%R in ('curl -s "http://127.0.0.1:8400/command/wait%WS_QUERY%" 2^>nul') do (
     echo %%R | findstr /i "\"allReady\":true" >nul 2>&1
     if not errorlevel 1 (
         goto :done

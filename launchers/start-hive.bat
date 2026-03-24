@@ -1,6 +1,6 @@
 @echo off
 :: Usage: start-hive.bat [project-dir]
-:: Launches orchestrator + 3 workers for a specific project.
+:: Launches coordinator + 3 workers for a specific project.
 :: Services (coordinator) must already be running — use start-services.bat first.
 
 echo.
@@ -32,7 +32,7 @@ echo  Project: %PROJECT_DIR%
 echo.
 
 :: Check coordinator is running
-curl -s http://127.0.0.1:8410/health >nul 2>&1
+curl -s http://127.0.0.1:8400/health >nul 2>&1
 if %errorlevel% neq 0 (
     echo  ERROR: Coordinator not running! Start services first:
     echo    %LAUNCHER_DIR%start-services.bat
@@ -45,13 +45,13 @@ echo.
 :: Check for Windows Terminal
 where wt >nul 2>&1
 if %errorlevel% equ 0 (
-    wt new-tab --title "Orchestrator [%PROJECT_DIR%]" cmd /k "%LAUNCHER_DIR%start-worker.bat orchestrator %PROJECT_DIR%" ; ^
+    wt new-tab --title "Coordinator [%PROJECT_DIR%]" cmd /k "%LAUNCHER_DIR%start-worker.bat coordinator %PROJECT_DIR%" ; ^
        new-tab --title "Dev-Lead [%PROJECT_DIR%]" cmd /k "timeout /t 5 /nobreak >nul && %LAUNCHER_DIR%start-worker.bat dev-lead %PROJECT_DIR%" ; ^
        new-tab --title "Worker-A [%PROJECT_DIR%]" cmd /k "timeout /t 8 /nobreak >nul && %LAUNCHER_DIR%start-worker.bat Worker-A %PROJECT_DIR%" ; ^
        new-tab --title "Worker-B [%PROJECT_DIR%]" cmd /k "timeout /t 11 /nobreak >nul && %LAUNCHER_DIR%start-worker.bat Worker-B %PROJECT_DIR%" ; ^
        new-tab --title "Worker-C [%PROJECT_DIR%]" cmd /k "timeout /t 14 /nobreak >nul && %LAUNCHER_DIR%start-worker.bat Worker-C %PROJECT_DIR%"
 ) else (
-    start "Orchestrator [%PROJECT_DIR%]" cmd /k "%LAUNCHER_DIR%start-worker.bat orchestrator %PROJECT_DIR%"
+    start "Coordinator [%PROJECT_DIR%]" cmd /k "%LAUNCHER_DIR%start-worker.bat coordinator %PROJECT_DIR%"
     timeout /t 5 /nobreak >nul
     start "Dev-Lead [%PROJECT_DIR%]" cmd /k "%LAUNCHER_DIR%start-worker.bat dev-lead %PROJECT_DIR%"
     timeout /t 3 /nobreak >nul
@@ -64,7 +64,7 @@ if %errorlevel% equ 0 (
 
 echo.
 echo  Hive launched (5 windows):
-echo    Orchestrator  — manages and assigns work
+echo    Coordinator  — manages and assigns work
 echo    Dev-Lead      — reads, scopes, plans
 echo    Worker-A      — executes tasks
 echo    Worker-B      — executes tasks

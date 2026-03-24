@@ -24,7 +24,7 @@ for %%A in (%*) do (
 )
 
 :: Check if coordinator is running
-curl -s --max-time 2 http://127.0.0.1:8410/health >nul 2>&1
+curl -s --max-time 2 http://127.0.0.1:8400/health >nul 2>&1
 if %errorlevel% neq 0 (
     echo  Coordinator not running — nothing to shut down.
     echo.
@@ -46,13 +46,13 @@ echo.
 
 :: Step 1: Show current hive status
 echo  Current hive status:
-curl -s http://127.0.0.1:8410/status 2>nul
+curl -s http://127.0.0.1:8400/status 2>nul
 echo.
 echo.
 
 :: Step 2: Broadcast SHUTDOWN command
 echo  Broadcasting SHUTDOWN...
-curl -s -X POST http://127.0.0.1:8410/command -H "Content-Type: application/json" -d "{\"command\":\"SHUTDOWN\",\"reason\":\"graceful shutdown via launcher\",\"issuedBy\":\"cli\"%WS_JSON%}" >nul 2>&1
+curl -s -X POST http://127.0.0.1:8400/command -H "Content-Type: application/json" -d "{\"command\":\"SHUTDOWN\",\"reason\":\"graceful shutdown via launcher\",\"issuedBy\":\"cli\"%WS_JSON%}" >nul 2>&1
 if %errorlevel% equ 0 (
     echo    SHUTDOWN broadcast sent.
 ) else (
@@ -74,7 +74,7 @@ set TRIES=0
 timeout /t 3 /nobreak >nul
 set /a TRIES+=1
 
-for /f "delims=" %%R in ('curl -s --max-time 2 "http://127.0.0.1:8410/command/wait%WS_QUERY%" 2^>nul') do (
+for /f "delims=" %%R in ('curl -s --max-time 2 "http://127.0.0.1:8400/command/wait%WS_QUERY%" 2^>nul') do (
     echo %%R | findstr /i "\"allReady\":true" >nul 2>&1
     if not errorlevel 1 (
         echo    All agents idle — safe to stop.
@@ -103,7 +103,7 @@ echo.
 echo  Stopping coordinator...
 
 :: Find and kill node processes on known ports
-for %%P in (8410 8420 8400) do (
+for %%P in (8400 8420 8400) do (
     for /f "tokens=5" %%A in ('netstat -ano 2^>nul ^| findstr "LISTENING" ^| findstr ":%%P "') do (
         taskkill /F /PID %%A >nul 2>&1
         if not errorlevel 1 (

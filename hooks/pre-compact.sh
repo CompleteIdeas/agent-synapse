@@ -1,22 +1,22 @@
 #!/bin/bash
 # PreCompact hook: Auto-save critical state before context compaction fires.
 #
-# Fires for ALL agent roles (orchestrator, workers, dev-lead).
+# Fires for ALL agent roles (coordinator, workers, dev-lead).
 # Ensures state is persisted BEFORE the LLM's context gets summarized,
 # so post-compaction recovery has something reliable to read.
 #
-# Orchestrator: writes orchestrator_state.json with current timestamp
+# Coordinator: writes coordinator_state.json with current timestamp
 # Workers: writes a breadcrumb file with assignment context
 #
 # Install in .claude/settings.json as a PreCompact hook.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-COORDINATOR="${COORD_URL:-http://127.0.0.1:8410}"
+COORDINATOR="${COORD_URL:-http://127.0.0.1:8400}"
 
-# --- Orchestrator: update state file timestamp ---
-if [ "$WORKER_NAME" = "orchestrator" ]; then
-  STATE_FILE="$PROJECT_ROOT/orchestrator_state.json"
+# --- Coordinator: update state file timestamp ---
+if [ "$WORKER_NAME" = "coordinator" ]; then
+  STATE_FILE="$PROJECT_ROOT/coordinator_state.json"
   if [ -f "$STATE_FILE" ]; then
     # Update last_tick_at to now so post-compaction recovery knows state is fresh
     NOW=$(python -c "from datetime import datetime,timezone; print(datetime.now(timezone.utc).isoformat())" 2>/dev/null)

@@ -2,56 +2,64 @@
 
 > **Preview** — This project is in active development with known bugs. It works well for our workflows but isn't production-ready for general use yet. Feedback, issues, and ideas are welcome. If you're looking for the stable memory system (works standalone without AgentSynapse), see [AgentWorkingMemory](https://github.com/CompleteIdeas/agent-working-memory).
 
-**Multi-agent orchestration with persistent memory for Claude Code.**
+**Multi-agent coordination with persistent memory for Claude Code.**
 
-AgentSynapse is a framework for running multiple Claude Code agents in parallel — with shared memory, coordinated task assignment, file locking, and autonomous orchestration. It combines two core systems:
+AgentSynapse is a framework for running multiple Claude Code agents in parallel — with shared memory, coordinated task assignment, file locking, and autonomous coordination. It combines two core systems:
 
-- **Memory** (`@agent-synapse/memory`) — Cognitive memory layer for AI agents. Activation-based retrieval, salience filtering, Hebbian learning, and associative connections. Agents remember across sessions.
-- **Coordinator** (`@agent-synapse/coordinator`) — Real-time multi-agent coordination. Task dispatch, file locks, heartbeats, worker discovery, and command broadcasting.
+- **AWM** ([AgentWorkingMemory](https://github.com/CompleteIdeas/agent-working-memory)) — Cognitive memory layer with activation-based retrieval, salience filtering, Hebbian learning. Agents remember across sessions. Also serves as the coordination backend when `AWM_COORDINATION=true`.
+- **Coordination** — Built into AWM. Task dispatch, file locks, heartbeats, worker discovery, and command broadcasting. All on port 8400.
 
 ```
-┌──────────────┐    ┌──────────────────┐    ┌──────────────┐
-│ Orchestrator │    │   Coordinator    │    │  Worker-A    │
-│              │◄──►│   port 8410      │◄──►│              │
-└──────┬───────┘    └──────────────────┘    └──────┬───────┘
-       │                                           │
-       │            ┌──────────────────┐           │
-       └───────────►│     Memory       │◄──────────┘
-                    │   port 8400      │
-                    │   (AWM / MCP)    │
-                    └──────────────────┘
+                    ┌──────────────────────────────┐
+┌──────────────┐    │  AWM + Coordination (8400)   │    ┌──────────────┐
+│  Coordinator │◄──►│                              │◄──►│  Worker-A    │
+│  (agent)     │    │  Memory: MCP tools per agent │    │              │
+└──────────────┘    │  Coord: HTTP REST API        │    └──────────────┘
+                    │                              │    ┌──────────────┐
+                    │                              │◄──►│  Worker-B    │
+                    └──────────────────────────────┘    └──────────────┘
 ```
 
 ## How It Works
 
-1. **Start the services** — Memory (port 8400) and Coordinator (port 8410)
+1. **Start the services** — AWM with coordination enabled (port 8400)
 2. **Launch workers** — Each worker is a separate Claude Code session in its own terminal
-3. **Launch the orchestrator** — Reads your task database, discovers workers, assigns work
+3. **Launch the coordinator** — Reads your task database, discovers workers, assigns work
 4. **Workers adapt** — Generic workers (Worker-A, B, C) take on whatever role the task needs
 5. **Memory persists** — Agents write discoveries to shared memory; future sessions recall them
 6. **File locks prevent collisions** — A PreToolUse hook blocks edits on files locked by another agent
 
+## Prerequisites
+
+- **Node.js >= 20** — `node -v` to check
+- **Git** — for submodules
+- **Claude CLI** (`claude`) — [Install Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+- **Windows Terminal** (recommended) — for tabbed agent windows. Falls back to separate cmd windows if not installed.
+- **Python 3** — used by some hooks for JSON parsing
+
 ## Quick Start
 
 ```bash
-# Clone
-git clone https://github.com/your-org/agent-synapse.git
+# 1. Clone + pull AWM submodule
+git clone https://github.com/CompleteIdeas/agent-synapse.git
 cd agent-synapse
+git submodule update --init
 
-# Install
+# 2. Install all dependencies (including AWM via npm workspaces)
 npm install
 
-# Start both services
-npm run dev
+# 3. Configure workspaces — edit paths for your machine
+cp synapse.workspaces.example.json synapse.workspaces.json
+# Edit synapse.workspaces.json: set projectDir to your project path
 
-# In separate terminals, launch agents
-./launchers/start-worker.bat orchestrator   # Tab 1: Orchestrator
-./launchers/start-worker.bat Worker-A       # Tab 2: Worker
-./launchers/start-worker.bat Worker-B       # Tab 3: Worker
-./launchers/start-worker.bat               # Tab 4: Auto-assigns Worker-C
-
-# Or launch everything at once (Windows Terminal)
+# 4. Launch everything (AWM + coordination + agents) in Windows Terminal
 ./launchers/start-all.bat
+
+# Or launch step by step:
+./launchers/start-services.bat                    # Start AWM + coordination
+./launchers/start-worker.bat coordinator           # Tab 1: Coordinator
+./launchers/start-worker.bat Worker-A              # Tab 2: Worker
+./launchers/start-worker.bat Worker-B              # Tab 3: Worker
 ```
 
 ## Project Structure
@@ -59,29 +67,27 @@ npm run dev
 ```
 agent-synapse/
 ├── packages/
-│   ├── memory/              # Cognitive memory (AWM)
-│   │   ├── src/
-│   │   │   ├── core/        # Decay, salience, Hebbian learning, embeddings
-│   │   │   ├── engine/      # Activation, consolidation, staging, eviction
-│   │   │   ├── storage/     # SQLite with FTS5
-│   │   │   ├── api/         # REST API (Fastify)
-│   │   │   ├── mcp.ts       # MCP server (Claude Code integration)
-│   │   │   └── cli.ts       # CLI tool
-│   │   └── tests/
-│   └── coordinator/         # Agent coordination
-│       └── src/
-│           ├── db.ts         # SQLite schema (agents, assignments, locks, commands)
-│           └── routes/       # REST API (checkin, assign, lock, command, status)
+│   ├── awm/                 # Git submodule → AgentWorkingMemory
+│   │   ├── src/             # Memory + coordination (activation, salience, MCP)
+│   │   └── ...              # See github.com/CompleteIdeas/agent-working-memory
+│   ├── coordinator/         # Legacy coordinator (deprecated — use AWM coordination)
+│   ├── task-manager/        # Sprint/task tracker service (port 8420, optional)
+│   └── memory-client/       # Thin HTTP client for AWM (programmatic access)
 ├── agents/                  # Claude Code agent definitions
 │   ├── worker.md            # Generic worker — adapts role per task
-│   └── orchestrator.md      # Autonomous orchestrator — manages the hive
-├── hooks/                   # Claude Code PreToolUse hooks
-│   └── check-file-lock.sh   # Blocks edits on files locked by another agent
-├── launchers/               # Start scripts
-│   ├── start-all.bat        # Launch coordinator + orchestrator + 3 workers
-│   ├── start-worker.bat     # Launch a single worker (auto-names Worker-A/B/C)
-│   └── start-coordinator.bat
-└── examples/                # Example project configurations
+│   └── coordinator.md       # Autonomous coordinator — manages the hive
+├── hooks/                   # Claude Code hooks
+│   ├── check-file-lock.sh   # PreToolUse: blocks edits on locked files
+│   ├── coordinator-watchdog.sh  # Notification: detects stalled coordinator loop
+│   ├── pre-compact.sh       # PreCompact: saves state before context compaction
+│   └── worker-cleanup.sh    # SessionEnd: releases locks on exit
+├── launchers/               # Start scripts (Windows)
+│   ├── start-all.bat        # Launch AWM + coordinator + workers
+│   ├── start-worker.bat     # Launch a single agent
+│   ├── launch-hive.cjs      # Programmatic hive launcher
+│   └── spawn-worker.cjs     # On-demand worker spawner
+├── bin/synapse.js           # CLI: npx agent-synapse <command>
+└── examples/                # Example configurations
 ```
 
 ## Core Concepts
@@ -131,9 +137,9 @@ Workers are generic. A single `worker.md` agent definition handles:
 
 The task description tells the worker what role to play. Worker-A might code one task and review the next.
 
-### Orchestrator
+### Coordinator
 
-The orchestrator runs autonomously:
+The coordinator runs autonomously:
 
 1. Checks in, discovers workers via `GET /workers`
 2. Pulls tasks from a task database or sprint plans
@@ -158,7 +164,7 @@ A `PreToolUse` hook that fires on every `Edit` and `Write` call:
 
 To use AgentSynapse in your own project:
 
-1. **Install and start the services** (memory + coordinator)
+1. **Install and start the services** (AWM with coordination enabled)
 2. **Copy `agents/` into your `.claude/agents/`** — customize task descriptions for your domain
 3. **Copy `hooks/check-file-lock.sh` into your `.claude/hooks/`** — add to `.claude/settings.json`
 4. **Configure MCP** in your Claude Code settings to connect to the memory server

@@ -38,7 +38,7 @@ Restart Claude Code and it just works. No server to run, no Docker, nothing runn
 
 Some other things it handles: isolated memory pools (work vs personal projects in one database), bearer token auth if you want security, incognito mode, execution checkpoints that survive context compaction, task tracking. A lot of the "yeah but what about..." stuff has been addressed from real usage.
 
-**Multi-agent is where it really shines.** I run an orchestrator + workers in parallel and they share memory. When one agent finds a bug, the others know about it automatically. That was actually the original motivation for building it.
+**Multi-agent is where it really shines.** I run a coordinator + workers in parallel and they share memory. When one agent finds a bug, the others know about it automatically. That was actually the original motivation for building it.
 
 It also runs as a standalone HTTP server (`awm serve`) so it's not locked to Claude Code — any tool that can make HTTP calls can read/write memories.
 

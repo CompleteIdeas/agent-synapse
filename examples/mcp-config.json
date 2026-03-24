@@ -1,12 +1,12 @@
 {
   "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/mcp-schema.json",
-  "_comment": "Example MCP config — AWM runs as standalone external service. Point to AgentWorkingMemory project.",
+  "_comment": "Example MCP config — AWM via git submodule at packages/awm/. Run 'git submodule update --init' first.",
   "mcpServers": {
     "agent-working-memory": {
       "command": "npx",
-      "args": ["tsx", "/path/to/AgentWorkingMemory/src/mcp.ts"],
+      "args": ["tsx", "./packages/awm/src/mcp.ts"],
       "env": {
-        "AWM_DB_PATH": "/path/to/data/memory.db"
+        "AWM_DB_PATH": "./data/memory.db"
       }
     }
   }

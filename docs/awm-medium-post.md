@@ -120,7 +120,7 @@ I queried my actual database to see what's really happening. These aren't benchm
 
 This is where AWM became something the built-in tools can't replicate.
 
-I run multiple Claude Code agents in parallel — an orchestrator managing tasks, coding workers implementing features, a dev-lead scoping work. They all share the same AWM database. When one agent discovers an undocumented constraint, the others pick it up automatically when they work on something related. No shared docs to maintain. Knowledge propagates across the team.
+I run multiple Claude Code agents in parallel — a coordinator managing tasks, coding workers implementing features, a dev-lead scoping work. They all share the same AWM database. When one agent discovers an undocumented constraint, the others pick it up automatically when they work on something related. No shared docs to maintain. Knowledge propagates across the team.
 
 One database can hold multiple isolated memory pools — work projects and personal projects don't bleed into each other, different agent teams can have their own namespace, and you control the boundaries with a single environment variable. If you want an extra layer of security, AWM supports bearer token auth to lock down access.
 

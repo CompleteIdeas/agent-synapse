@@ -1,32 +1,28 @@
 @echo off
 setlocal EnableDelayedExpansion
-title HIVE: Coordinator (8410)
+title HIVE: AWM + Coordination (8400)
 echo.
-echo  Starting Coordinator Service...
-echo  ================================
+echo  Starting AWM with Coordination Module...
+echo  =========================================
+echo.
+echo  NOTE: The coordinator is now part of AWM (port 8400).
+echo  This script starts AWM with AWM_COORDINATION=true.
 echo.
 
-:: Find SYNAPSE_DIR
-if exist "%~dp0..\packages\coordinator" (
-    set SYNAPSE_DIR=%~dp0..
-) else if exist "%~dp0..\node_modules\agent-synapse\packages\coordinator" (
-    set SYNAPSE_DIR=%~dp0..\node_modules\agent-synapse
-) else if exist "%~dp0.synapse-path" (
-    set /p _REL_PATH=<"%~dp0.synapse-path"
-    call :resolve_synapse "%~dp0" "!_REL_PATH!"
-) else (
-    for /f "delims=" %%G in ('npm root -g 2^>nul') do (
-        if exist "%%G\agent-synapse\packages\coordinator" set SYNAPSE_DIR=%%G\agent-synapse
-    )
+:: Find AWM directory
+set AWM_DIR=
+if exist "%~dp0..\packages\awm" (
+    set AWM_DIR=%~dp0..\packages\awm
+) else if exist "%~dp0..\node_modules\agent-synapse\packages\awm" (
+    set AWM_DIR=%~dp0..\node_modules\agent-synapse\packages\awm
 )
-if not defined SYNAPSE_DIR (
-    echo  ERROR: Cannot find AgentSynapse packages directory.
-    echo  Run "agent-synapse init --force" to fix, or set SYNAPSE_DIR manually.
+if not defined AWM_DIR (
+    echo  ERROR: Cannot find AWM directory (packages/awm).
     pause
     exit /b 1
 )
 
-cd /d "%SYNAPSE_DIR%"
+cd /d "%AWM_DIR%"
 
 :: Install deps if needed
 if not exist node_modules (
@@ -35,16 +31,9 @@ if not exist node_modules (
     echo.
 )
 
-:: Start with tsx
-echo  Launching on http://127.0.0.1:8410
+:: Start AWM with coordination enabled
+set AWM_COORDINATION=true
+echo  Launching AWM on http://127.0.0.1:8400 (coordination enabled)
 echo  Press Ctrl+C to stop
 echo.
-npx tsx packages/coordinator/src/index.ts
-goto :eof
-
-:resolve_synapse
-pushd "%~1"
-pushd "%~2"
-set SYNAPSE_DIR=%CD%
-popd & popd
-goto :eof
+npx tsx src/index.ts

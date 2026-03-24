@@ -11,7 +11,7 @@
 #   - Marks any in_progress assignment as failed (agent disconnected)
 #   - Posts checkout
 
-COORDINATOR="${COORD_URL:-http://127.0.0.1:8410}"
+COORDINATOR="${COORD_URL:-http://127.0.0.1:8400}"
 
 # Need worker name to find our agent
 if [ -z "$WORKER_NAME" ]; then

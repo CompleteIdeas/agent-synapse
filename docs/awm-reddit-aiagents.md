@@ -10,7 +10,7 @@ My use case pushed me in a different direction, so I built [AgentWorkingMemory](
 
 **My use case:**
 
-I'm rebuilding a 1.4M-line legacy codebase with multiple agents running in parallel — an orchestrator assigning tasks to 3-4 workers. I also jump between development, support tasks, presentations, and other projects throughout the day. I needed memory that could keep up with that context switching, and I needed agents to share what they learn in real-time. When Worker-A discovers a database constraint that changes the migration plan, Worker-B needs to know about it during the current session, not after.
+I'm rebuilding a 1.4M-line legacy codebase with multiple agents running in parallel — a coordinator assigning tasks to 3-4 workers. I also jump between development, support tasks, presentations, and other projects throughout the day. I needed memory that could keep up with that context switching, and I needed agents to share what they learn in real-time. When Worker-A discovers a database constraint that changes the migration plan, Worker-B needs to know about it during the current session, not after.
 
 **How we enforce recall (the hard part):**
 

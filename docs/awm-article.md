@@ -111,7 +111,7 @@ The consolidation cycle is what makes AWM improve over time rather than degrade.
 
 ## Multi-Agent Shared Memory
 
-Here is where AWM became transformative for my workflow. In the the platform project, I run multiple Claude Code agents in parallel — an orchestrator that assigns tasks, coding workers that implement features, reviewers that audit code. They all read and write to the same AWM database.
+Here is where AWM became transformative for my workflow. In the the platform project, I run multiple Claude Code agents in parallel — a coordinator that assigns tasks, coding workers that implement features, reviewers that audit code. They all read and write to the same AWM database.
 
 When Worker-A discovers that a particular API endpoint has an undocumented constraint, it writes that to memory. When Worker-B starts working on a feature that touches that endpoint an hour later, it recalls the constraint automatically. No Slack messages, no shared docs, no human relay.
 

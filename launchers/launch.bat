@@ -52,7 +52,7 @@ echo     Q^)  Quit
 echo.
 
 :: Check service status
-curl -s http://127.0.0.1:8410/health >nul 2>&1
+curl -s http://127.0.0.1:8400/health >nul 2>&1
 if !errorlevel! equ 0 (
     echo   [Coordinator: RUNNING]
 ) else (
@@ -225,7 +225,7 @@ set "NEW_DEVLEAD=1"
 set /p "NEW_DEVLEAD=  Include Dev-Lead? (1=yes, 0=no) [1]: "
 
 set "NEW_ORCH=1"
-set /p "NEW_ORCH=  Include Orchestrator? (1=yes, 0=no) [1]: "
+set /p "NEW_ORCH=  Include Coordinator? (1=yes, 0=no) [1]: "
 
 echo.
 echo   Creating workspace: !NEW_NAME!
@@ -233,7 +233,7 @@ echo     Dir:          !NEW_DIR!
 echo     Label:        !NEW_LABEL!
 echo     Workers:      !NEW_WORKERS!
 echo     Dev-Lead:     !NEW_DEVLEAD!
-echo     Orchestrator: !NEW_ORCH!
+echo     Coordinator:  !NEW_ORCH!
 echo.
 
 node "%LAUNCHER_DIR%resolve-workspace.js" --add "!NEW_NAME!" "!NEW_DIR!" "!NEW_LABEL!" !NEW_WORKERS! !NEW_DEVLEAD! !NEW_ORCH! 2>&1

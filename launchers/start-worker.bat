@@ -14,17 +14,17 @@ if not defined PROJECT_DIR set PROJECT_DIR=%cd%
 :: The PROJECT_DIR is passed to Claude via system prompt
 
 :: Check coordinator is running
-curl -s http://127.0.0.1:8410/health >nul 2>&1
+curl -s http://127.0.0.1:8400/health >nul 2>&1
 if %errorlevel% neq 0 (
     echo  ERROR: Coordinator not running!
     pause
     exit /b 1
 )
 
-:: Handle orchestrator
-if /i "%WORKER_NAME%"=="orchestrator" (
-    title HIVE: Orchestrator
-    claude --dangerously-skip-permissions --agent orchestrator --append-system-prompt "YOUR IDENTITY: You are the ORCHESTRATOR. Display [ORCHESTRATOR] at the start of every response. You manage the hive. NEVER use the Agent tool. NEVER spawn subagents. Check GET /workers to see who is online before assigning work. PROJECT DIRECTORY: %PROJECT_DIR%\launchers\.." "Execute hive protocol: read synapse.config.json for mode and services, checkin to coordinator, memory_restore. Then WAIT for workers - poll GET /workers every 10 seconds until at least 2 workers show alive:true (up to 60s). Only after workers are online, report the hive status and ask me what to assign."
+:: Handle coordinator
+if /i "%WORKER_NAME%"=="coordinator" (
+    title HIVE: Coordinator
+    claude --dangerously-skip-permissions --agent coordinator --append-system-prompt "YOUR IDENTITY: You are the COORDINATOR. Display [COORDINATOR] at the start of every response. You manage the hive. NEVER use the Agent tool. NEVER spawn subagents. Check GET /workers to see who is online before assigning work. PROJECT DIRECTORY: %PROJECT_DIR%\launchers\.." "Execute hive protocol: read synapse.config.json for mode and services, checkin to coordinator, memory_restore. Then WAIT for workers - poll GET /workers every 10 seconds until at least 2 workers show alive:true (up to 60s). Only after workers are online, report the hive status and ask me what to assign."
     exit /b 0
 )
 

@@ -63,7 +63,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/hooks/orchestrator-watchdog.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/hooks/coordinator-watchdog.sh\"",
             "timeout": 10
           }
         ]

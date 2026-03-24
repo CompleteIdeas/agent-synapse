@@ -47,6 +47,7 @@ The hive runs two services:
 | GET | `/status` | — | Full dashboard (agents, assignments, locks, stats) |
 | POST | `/finding` | `{"agentId":"UUID","category":"...","severity":"...","description":"..."}` | Report a finding |
 | GET | `/findings?limit=N` | — | List findings |
+| PATCH | `/pulse` | `{"agentId":"UUID"}` | Lightweight heartbeat — updates lastSeen without creating event rows |
 | GET | `/health` | — | Health check |
 
 ## Automatic Cleanup
@@ -224,6 +225,18 @@ memory_write:
 ```
 
 **Do NOT wait until task end to write.** Write as you discover. Other workers may need this context mid-task.
+
+### Mid-Task Pulse (Every 60 Seconds During Active Work)
+
+While actively working on a task, send a lightweight pulse to keep your `lastSeen` fresh. This prevents the coordinator from marking you as stale during long operations.
+
+```bash
+curl -s -X PATCH http://127.0.0.1:8400/pulse \
+  -H "Content-Type: application/json" \
+  -d '{"agentId":"YOUR_AGENT_ID"}'
+```
+
+**When to pulse:** After each significant tool call (file read, edit, bash command) during a task. Unlike `/checkin`, pulse does NOT create event rows — it's a cheap timestamp update. If you're in the middle of a multi-step task and haven't called the coordinator in >60 seconds, send a pulse.
 
 ### Command Polling (Every 5-10 Minutes)
 

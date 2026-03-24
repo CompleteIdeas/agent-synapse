@@ -1,28 +1,28 @@
 #!/bin/bash
 # Notification hook: Fires when background tasks (sleep timers) complete.
-# Checks if the orchestrator's monitoring loop has stalled and injects a reminder.
+# Checks if the coordinator's monitoring loop has stalled and injects a reminder.
 #
 # This is the external enforcement mechanism — even if the LLM forgets
 # to re-enter the loop, this hook catches it on the next tool use.
 #
-# Install in .claude/settings.json as a Notification hook for the orchestrator role.
+# Install in .claude/settings.json as a Notification hook for the coordinator role.
 
 INPUT=$(cat)
 
-# Only care about orchestrator sessions
-if [ -z "$WORKER_NAME" ] || [ "$WORKER_NAME" != "orchestrator" ]; then
+# Only care about coordinator sessions
+if [ -z "$WORKER_NAME" ] || [ "$WORKER_NAME" != "coordinator" ]; then
   exit 0
 fi
 
 # Find state file
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# Hook is at <project>/hooks/orchestrator-watchdog.sh
-# State file is at <project>/orchestrator_state.json
+# Hook is at <project>/hooks/coordinator-watchdog.sh
+# State file is at <project>/coordinator_state.json
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-STATE_FILE="$PROJECT_ROOT/orchestrator_state.json"
+STATE_FILE="$PROJECT_ROOT/coordinator_state.json"
 
 if [ ! -f "$STATE_FILE" ]; then
-  # No state file yet — orchestrator hasn't completed first cycle
+  # No state file yet — coordinator hasn't completed first cycle
   exit 0
 fi
 
@@ -58,7 +58,7 @@ if [ "$ELAPSED" -gt 300 ]; then
 {
   "hookSpecificOutput": {
     "hookEventName": "Notification",
-    "message": "LOOP STALLED: Your monitoring loop hasn't ticked in ${MINUTES} minutes (last: $LAST_TICK). Re-enter the loop NOW: schedule sleep 180 (run_in_background), then run a full monitoring cycle. Read orchestrator_state.json to recover your state."
+    "message": "LOOP STALLED: Your monitoring loop hasn't ticked in ${MINUTES} minutes (last: $LAST_TICK). Re-enter the loop NOW: schedule sleep 180 (run_in_background), then run a full monitoring cycle. Read coordinator_state.json to recover your state."
   }
 }
 ENDJSON

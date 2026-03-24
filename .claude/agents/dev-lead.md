@@ -166,6 +166,7 @@ Reset idle poll count to 0. Go back to idle poll with fresh backoff. The coordin
 | GET | `/workers` | — | List all workers |
 | GET | `/status` | — | Full dashboard |
 | POST | `/finding` | `{"agentId":"UUID","category":"...","severity":"...","description":"..."}` | Report a finding |
+| PATCH | `/pulse` | `{"agentId":"UUID"}` | Lightweight heartbeat — updates lastSeen, no event row |
 | GET | `/health` | — | Health check |
 
 ## SHUTDOWN Protocol

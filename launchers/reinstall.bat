@@ -65,10 +65,10 @@ if exist ".claude\agents\worker.md" (
 ) else (
     echo    MISSING  .claude\agents\worker.md
 )
-if exist ".claude\agents\orchestrator.md" (
-    echo    OK  .claude\agents\orchestrator.md
+if exist ".claude\agents\coordinator.md" (
+    echo    OK  .claude\agents\coordinator.md
 ) else (
-    echo    MISSING  .claude\agents\orchestrator.md
+    echo    MISSING  .claude\agents\coordinator.md
 )
 
 echo.

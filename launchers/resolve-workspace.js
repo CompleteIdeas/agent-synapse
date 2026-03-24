@@ -4,7 +4,7 @@
 //   If no workspace name given, uses the "default" from config.
 //   If workspace name is "--list", prints available workspace names.
 //   If workspace name is "--add", adds a new workspace:
-//     node resolve-workspace.js --add <name> <dir> <label> [workers] [devLead] [orchestrator]
+//     node resolve-workspace.js --add <name> <dir> <label> [workers] [devLead] [coordinator]
 
 import { readFileSync, writeFileSync } from 'fs';
 import { resolve, dirname } from 'path';
@@ -43,10 +43,10 @@ if (arg === '--add') {
   const label = process.argv[5];
   const workers = parseInt(process.argv[6] || '3', 10);
   const devLead = (process.argv[7] || '1') === '1';
-  const orchestrator = (process.argv[8] || '1') === '1';
+  const coordinator = (process.argv[8] || '1') === '1';
 
   if (!name || !dir || !label) {
-    console.error('ERROR=Usage: --add <name> <dir> <label> [workers] [devLead] [orchestrator]');
+    console.error('ERROR=Usage: --add <name> <dir> <label> [workers] [devLead] [coordinator]');
     process.exit(1);
   }
   if (config.workspaces[name]) {
@@ -58,7 +58,7 @@ if (arg === '--add') {
     dir,
     label,
     namespace: name,
-    hive: { orchestrator, devLead, workers }
+    hive: { coordinator, devLead, workers }
   };
 
   writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
@@ -87,4 +87,4 @@ console.log(`NAMESPACE=${ws.namespace || wsName}`);
 console.log(`LABEL=${ws.label || wsName}`);
 console.log(`WORKERS=${ws.hive?.workers ?? 3}`);
 console.log(`DEV_LEAD=${ws.hive?.devLead ? 1 : 0}`);
-console.log(`ORCHESTRATOR=${ws.hive?.orchestrator !== false ? 1 : 0}`);
+console.log(`COORDINATOR=${ws.hive?.coordinator !== false ? 1 : 0}`);

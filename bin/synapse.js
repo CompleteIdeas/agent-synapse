@@ -20,7 +20,7 @@ const COMMANDS = {
   shutdown: 'Graceful shutdown: broadcast SHUTDOWN to agents, then stop services',
   status: 'Check service health',
   worker: 'Launch a Claude Code worker',
-  orchestrator: 'Launch the Claude Code orchestrator',
+  coordinator: 'Launch the Claude Code coordinator',
   workspaces: 'List registered workspaces',
   help: 'Show this help message',
 };
@@ -104,7 +104,7 @@ function cmdInit() {
   // Copy agent definitions
   log('Agent definitions:');
   copyIfMissing(join(PKG_ROOT, 'agents', 'worker.md'), join(agentsDir, 'worker.md'), 'agents/worker.md', force);
-  copyIfMissing(join(PKG_ROOT, 'agents', 'orchestrator.md'), join(agentsDir, 'orchestrator.md'), 'agents/orchestrator.md', force);
+  copyIfMissing(join(PKG_ROOT, 'agents', 'coordinator.md'), join(agentsDir, 'coordinator.md'), 'agents/coordinator.md', force);
 
   // Copy hooks (into both .claude/hooks/ and project-root hooks/)
   const projectHooksDir = join(projectDir, 'hooks');
@@ -113,7 +113,7 @@ function cmdInit() {
   log('Hooks:');
   copyIfMissing(join(PKG_ROOT, 'hooks', 'check-file-lock.sh'), join(hooksDir, 'check-file-lock.sh'), 'hooks/check-file-lock.sh', force);
   copyIfMissing(join(PKG_ROOT, 'hooks', 'worker-cleanup.sh'), join(hooksDir, 'worker-cleanup.sh'), 'hooks/worker-cleanup.sh', force);
-  copyIfMissing(join(PKG_ROOT, 'hooks', 'orchestrator-watchdog.sh'), join(projectHooksDir, 'orchestrator-watchdog.sh'), 'hooks/orchestrator-watchdog.sh', force);
+  copyIfMissing(join(PKG_ROOT, 'hooks', 'coordinator-watchdog.sh'), join(projectHooksDir, 'coordinator-watchdog.sh'), 'hooks/coordinator-watchdog.sh', force);
   copyIfMissing(join(PKG_ROOT, 'hooks', 'pre-compact.sh'), join(projectHooksDir, 'pre-compact.sh'), 'hooks/pre-compact.sh', force);
 
   // Copy skills
@@ -167,7 +167,7 @@ function cmdInit() {
       dir: projectDir,
       label: basename(projectDir),
       namespace: wsName,
-      hive: { orchestrator: true, devLead: true, workers: 3 },
+      hive: { coordinator: true, devLead: true, workers: 3 },
     };
     if (!wsConfig.default) wsConfig.default = wsName;
     writeFileSync(wsConfigPath, JSON.stringify(wsConfig, null, 2) + '\n');
@@ -219,7 +219,7 @@ function cmdInit() {
   if (existsSync(gitignorePath)) {
     const gitignore = readFileSync(gitignorePath, 'utf-8');
     if (!gitignore.includes('data/')) {
-      writeFileSync(gitignorePath, gitignore.trimEnd() + '\n\n# AgentSynapse\ndata/\norchestrator_state.json\ncoordination.db\n.compact-breadcrumb-*.json\n');
+      writeFileSync(gitignorePath, gitignore.trimEnd() + '\n\n# AgentSynapse\ndata/\ncoordinator_state.json\ncoordination.db\n.compact-breadcrumb-*.json\n');
       logOk('.gitignore updated');
     }
   }
@@ -235,7 +235,7 @@ function cmdInit() {
     log('  Option B — Manual:');
   }
   log('  1. Start services:     npx agent-synapse start');
-  log('  2. Launch orchestrator: npx agent-synapse orchestrator');
+  log('  2. Launch coordinator: npx agent-synapse coordinator');
   log('  3. Launch workers:     npx agent-synapse worker');
   log('');
   log(`  Workspace: "${wsName}" — change default in synapse.workspaces.json`);
@@ -246,7 +246,7 @@ function cmdInit() {
 
 function cmdStart() {
   const services = ['coordinator', 'task-manager'];
-  const ports = { coordinator: 8410, 'task-manager': 8420 };
+  const ports = { coordinator: 8400, 'task-manager': 8420 };
 
   header('Starting AgentSynapse services (AWM runs externally)');
 
@@ -309,7 +309,7 @@ function cmdStart() {
   log('');
   log('Waiting for services to come up...');
   setTimeout(() => {
-    const allPorts = { coordinator: 8410, 'task-manager': 8420 };
+    const allPorts = { coordinator: 8400, 'task-manager': 8420 };
     for (const [svc, port] of Object.entries(allPorts)) {
       const healthy = checkHealth(`http://127.0.0.1:${port}`);
       if (healthy) {
@@ -360,7 +360,7 @@ function cmdStop() {
 function cmdStatus() {
   const services = [
     { name: 'AWM (external)', port: 8400 },
-    { name: 'coordinator', port: 8410 },
+    { name: 'coordinator', port: 8400 },
     { name: 'task-manager', port: 8420 },
   ];
 
@@ -377,7 +377,7 @@ function cmdStatus() {
 
   // Check coordinator for workers
   try {
-    const result = execSync('curl -s --max-time 2 http://127.0.0.1:8410/workers', { encoding: 'utf-8' });
+    const result = execSync('curl -s --max-time 2 http://127.0.0.1:8400/workers', { encoding: 'utf-8' });
     const data = JSON.parse(result);
     log('');
     if (data.count > 0) {
@@ -402,7 +402,7 @@ function cmdWorker() {
   const projectDir = args[1] ? resolve(args[1]) : process.cwd();
 
   // Check coordinator is running
-  if (!checkHealth('http://127.0.0.1:8410')) {
+  if (!checkHealth('http://127.0.0.1:8400')) {
     logErr('Coordinator not running! Start services first: npx agent-synapse start');
     process.exit(1);
   }
@@ -411,7 +411,7 @@ function cmdWorker() {
   let name = workerName;
   if (!name) {
     try {
-      const result = execSync('curl -s --max-time 2 http://127.0.0.1:8410/workers', { encoding: 'utf-8' });
+      const result = execSync('curl -s --max-time 2 http://127.0.0.1:8400/workers', { encoding: 'utf-8' });
       const data = JSON.parse(result);
       const taken = (data.workers || []).map(w => w.name);
       for (const letter of 'ABCDEFGH'.split('')) {
@@ -438,7 +438,7 @@ function cmdWorker() {
     process.exit(1);
   }
 
-  const systemPrompt = `YOUR IDENTITY: You are ${name}. Display this at the start of every response: [${name}]. Set WORKER_NAME=${name} for all checkin calls. You are a generic worker — your role is determined by whatever task the orchestrator assigns you. PROJECT DIRECTORY: ${projectDir}`;
+  const systemPrompt = `YOUR IDENTITY: You are ${name}. Display this at the start of every response: [${name}]. Set WORKER_NAME=${name} for all checkin calls. You are a generic worker — your role is determined by whatever task the coordinator assigns you. PROJECT DIRECTORY: ${projectDir}`;
   const startPrompt = `Execute hive protocol: checkin to coordinator as ${name}, check commands, memory_restore, GET /assignment. If no task, enter idle poll loop (every 30s). Never exit until SHUTDOWN.`;
 
   const claudeArgs = [
@@ -460,31 +460,31 @@ function cmdWorker() {
   });
 }
 
-// ─── orchestrator ───────────────────────────────────────────────────────────
+// ─── coordinator ────────────────────────────────────────────────────────────
 
-function cmdOrchestrator() {
+function cmdCoordinator() {
   const projectDir = args[0] ? resolve(args[0]) : process.cwd();
 
   // Check coordinator is running
-  if (!checkHealth('http://127.0.0.1:8410')) {
+  if (!checkHealth('http://127.0.0.1:8400')) {
     logErr('Coordinator not running! Start services first: npx agent-synapse start');
     process.exit(1);
   }
 
-  header(`Launching Orchestrator in ${projectDir}`);
+  header(`Launching Coordinator in ${projectDir}`);
 
-  const agentFile = join(projectDir, '.claude', 'agents', 'orchestrator.md');
+  const agentFile = join(projectDir, '.claude', 'agents', 'coordinator.md');
   if (!existsSync(agentFile)) {
-    logErr('orchestrator.md not found. Run "npx agent-synapse init" first.');
+    logErr('coordinator.md not found. Run "npx agent-synapse init" first.');
     process.exit(1);
   }
 
-  const systemPrompt = `YOUR IDENTITY: You are the ORCHESTRATOR. Display this at the start of every response: [ORCHESTRATOR]. You manage the hive. NEVER use the Agent tool. NEVER spawn subagents or background tasks. Workers are generic (Worker-A, Worker-B, etc.) and adapt to whatever task you assign. Check GET /workers to see who's online before assigning work. PROJECT DIRECTORY: ${projectDir}`;
+  const systemPrompt = `YOUR IDENTITY: You are the COORDINATOR. Display this at the start of every response: [COORDINATOR]. You manage the hive. NEVER use the Agent tool. NEVER spawn subagents or background tasks. Workers are generic (Worker-A, Worker-B, etc.) and adapt to whatever task you assign. Check GET /workers to see who's online before assigning work. PROJECT DIRECTORY: ${projectDir}`;
   const startPrompt = `Execute hive protocol: read synapse.config.json for mode and services, checkin to coordinator, memory_restore. Then WAIT for workers — poll GET /workers every 10 seconds until at least 2 workers show alive:true (up to 60s). Only after workers are online, report the hive status and ask me what to assign.`;
 
   const claudeArgs = [
     '--dangerously-skip-permissions',
-    '--agent', 'orchestrator',
+    '--agent', 'coordinator',
     '--append-system-prompt', systemPrompt,
     startPrompt,
   ];
@@ -492,12 +492,12 @@ function cmdOrchestrator() {
   const child = spawn('claude', claudeArgs, {
     cwd: projectDir,
     stdio: 'inherit',
-    env: { ...process.env, WORKER_NAME: 'orchestrator' },
+    env: { ...process.env, WORKER_NAME: 'coordinator' },
     shell: true,
   });
 
   child.on('exit', (code) => {
-    log(`Orchestrator exited with code ${code}`);
+    log(`Coordinator exited with code ${code}`);
   });
 }
 
@@ -510,7 +510,7 @@ function cmdShutdown() {
   header('Graceful Shutdown');
 
   // Step 1: Check if coordinator is running
-  if (!checkHealth('http://127.0.0.1:8410')) {
+  if (!checkHealth('http://127.0.0.1:8400')) {
     log('Coordinator not running — skipping agent shutdown broadcast.');
     log('Stopping services directly...');
     cmdStop();
@@ -521,7 +521,7 @@ function cmdShutdown() {
   log('Broadcasting SHUTDOWN to all agents...');
   try {
     const result = execSync(
-      `curl -s -X POST http://127.0.0.1:8410/command -H "Content-Type: application/json" -d "{\\"command\\":\\"SHUTDOWN\\",\\"reason\\":\\"graceful shutdown via CLI\\",\\"issuedBy\\":\\"cli\\"}"`,
+      `curl -s -X POST http://127.0.0.1:8400/command -H "Content-Type: application/json" -d "{\\"command\\":\\"SHUTDOWN\\",\\"reason\\":\\"graceful shutdown via CLI\\",\\"issuedBy\\":\\"cli\\"}"`,
       { encoding: 'utf-8' }
     );
     const data = JSON.parse(result);
@@ -547,7 +547,7 @@ function cmdShutdown() {
   const pollAgents = () => {
     try {
       const result = execSync(
-        'curl -s --max-time 2 http://127.0.0.1:8410/command/wait?status=idle',
+        'curl -s --max-time 2 http://127.0.0.1:8400/command/wait?status=idle',
         { encoding: 'utf-8' }
       );
       const data = JSON.parse(result);
@@ -611,7 +611,7 @@ function cmdWorkspaces() {
 function cmdHelp() {
   console.log(`
   agent-synapse v${VERSION}
-  Multi-agent orchestration with persistent memory for Claude Code.
+  Multi-agent coordination with persistent memory for Claude Code.
 
   Usage:
     npx agent-synapse <command> [options]
@@ -623,7 +623,7 @@ function cmdHelp() {
     shutdown [--now]       Graceful shutdown: SHUTDOWN agents, wait, then stop services
     status                Check service health and list workers
     worker [name] [dir]   Launch a Claude Code worker agent
-    orchestrator [dir]    Launch the Claude Code orchestrator agent
+    coordinator [dir]     Launch the Claude Code coordinator agent
     help                  Show this help message
 
   Examples:
@@ -634,13 +634,13 @@ function cmdHelp() {
     npx agent-synapse worker                      # Auto-named worker (Worker-A)
     npx agent-synapse worker Worker-B             # Named worker
     npx agent-synapse worker Worker-A ./my-project  # Worker in specific project
-    npx agent-synapse orchestrator                # Launch orchestrator
+    npx agent-synapse coordinator                 # Launch coordinator
     npx agent-synapse status                      # Health check
 
   Workflow:
     1. npx agent-synapse init        # One-time setup per project
     2. npx agent-synapse start       # Start services (once per session)
-    3. npx agent-synapse orchestrator # Terminal 1: orchestrator
+    3. npx agent-synapse coordinator  # Terminal 1: coordinator
     4. npx agent-synapse worker      # Terminal 2: Worker-A
     5. npx agent-synapse worker      # Terminal 3: Worker-B
 
@@ -669,8 +669,8 @@ switch (command) {
   case 'worker':
     cmdWorker();
     break;
-  case 'orchestrator':
-    cmdOrchestrator();
+  case 'coordinator':
+    cmdCoordinator();
     break;
   case 'workspaces':
   case 'ws':
