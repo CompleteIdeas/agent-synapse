@@ -1,9 +1,9 @@
-# Edge Case Test Results — 2026-03-09T23:42:45.886Z
+# Edge Case Test Results — 2026-03-24T13:06:41.183Z
 
 ## Summary
 | Test | Pass | Total | Score |
 |------|------|-------|-------|
-| 1. Context Collapse | 5 | 5 | 100% |
+| 1. Context Collapse | 4 | 5 | 80% |
 | 2. Mega-Hub Toxicity | 5 | 5 | 100% |
 | 3. Flashbulb Distortion | 4 | 4 | 100% |
 | 4. Temporal Incoherence | 3 | 3 | 100% |
@@ -12,7 +12,7 @@
 | 7. Contradiction Trapping | 3 | 3 | 100% |
 | 8. Bridge Overshoot | 4 | 4 | 100% |
 | 9. Noise Forgetting Benefit | 3 | 3 | 100% |
-| **OVERALL** | **34** | **34** | **100.0%** |
+| **OVERALL** | **33** | **34** | **97.1%** |
 
 **Grade: EXCELLENT**
 
@@ -22,7 +22,7 @@
   [PASS] Rare incident "corruption" in top 3
   [PASS] Rare incident "double-charge" in top 3
   [PASS] Rare incident "dns" in top 3
-  [PASS] Rare incident "memory leak" in top 3
+  [FAIL] Rare incident "memory leak" in top 3
 
 ### 2. Mega-Hub Toxicity
   [PASS] "health insurance" NOT contaminated by Phoenix hub
@@ -65,6 +65,6 @@
   [PASS] Visa query does NOT falsely return hiring info
 
 ### 9. Noise Forgetting Benefit
-  [PASS] 5/5 quality memories in top 5 after noise consolidation (need ≥4)
-  [PASS] Consolidation improved quality recall: 5→5
-  [PASS] Active memories reduced to 5 (noise archived/pruned)
+  [PASS] 4/5 quality memories in top 5 after noise consolidation (need ≥4)
+  [PASS] Consolidation improved quality recall: 4→4
+  [PASS] Active memories reduced to 6 (noise archived/pruned)

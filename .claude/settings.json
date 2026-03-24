@@ -1,4 +1,39 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(git:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
+      "Bash(curl:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(rm:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(mkdir:*)",
+      "Bash(du:*)",
+      "Bash(file:*)",
+      "Bash(xxd:*)",
+      "Bash(cmd:*)",
+      "Bash(wt:*)",
+      "Bash(tasklist:*)",
+      "Bash(where:*)",
+      "Bash(python:*)",
+      "Bash(start:*)",
+      "Bash(timeout:*)",
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch"
+    ],
+    "defaultMode": "bypassPermissions"
+  },
   "hooks": {
     "PreToolUse": [
       {
