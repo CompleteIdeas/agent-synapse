@@ -1,0 +1,669 @@
+// Copyright 2026 Robert Winter / Complete Ideas
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Sleep Cycle — offline memory consolidation.
+ *
+ * Models the brain's consolidation during sleep:
+ *   1. Replay — find clusters of semantically similar memories
+ *   2. Strengthen — reinforce edges within clusters + access-weighted boost
+ *   3. Bridge — create cross-cluster shortcuts between related topic areas
+ *   4. Decay — weaken unused edges, prune dead ones
+ *   5. Homeostasis — normalize outgoing edge weights to prevent hub explosion
+ *   6. Forget — archive/delete memories that were never retrieved (age-gated)
+ *   7. Sweep — promote or discard uncertain (staging) memories
+ *
+ * No artificial "summary nodes" are created. Instead, the associative
+ * graph gets denser where knowledge overlaps and sparser where it doesn't.
+ * The beam search graph walk in activation.ts naturally propagates through
+ * these strengthened pathways.
+ *
+ * Run between sessions or on a timer (e.g., every few hours).
+ */
+
+import { cosineSimilarity } from '../core/embeddings.js';
+import { strengthenAssociation, decayAssociation } from '../core/hebbian.js';
+import type { Engram } from '../types/index.js';
+import type { EngramStore } from '../storage/sqlite.js';
+
+/** Cosine similarity for initial candidate detection (single-link entry gate) */
+const SIMILARITY_THRESHOLD = 0.65;
+
+/** Minimum pairwise cosine for cluster diameter enforcement.
+ * Prevents chaining: a candidate must be this similar to ALL cluster members, not just one.
+ * 0.50 = allows topically coherent clusters without cross-topic chaining. */
+const MIN_PAIRWISE_COS = 0.50;
+
+/** Lower threshold for cross-cluster bridge edges */
+const BRIDGE_THRESHOLD = 0.25;
+
+/** Minimum edge weight to form a new connection during replay */
+const INITIAL_EDGE_WEIGHT = 0.3;
+
+/** Boost factor for strengthening existing edges between cluster members */
+const CONSOLIDATION_SIGNAL = 0.5;
+
+/** Max new edges to create per sleep cycle (prevent graph explosion) */
+const MAX_NEW_EDGES_PER_CYCLE = 50;
+
+/** Max bridge edges per cycle (cross-cluster shortcuts) */
+const MAX_BRIDGE_EDGES_PER_CYCLE = 20;
+
+/** Edge weight below which we prune during decay */
+const PRUNE_THRESHOLD = 0.01;
+
+/** Target total outgoing edge weight per node (homeostasis) */
+const HOMEOSTASIS_TARGET = 10.0;
+
+/** Grace period before forgetting curve starts (days) */
+const FORGET_GRACE_DAYS = 7;
+
+/** Age at which never-retrieved memories get archived (days) */
+const FORGET_ARCHIVE_DAYS = 30;
+
+/** Age at which archived, never-retrieved, unconnected memories get deleted (days) */
+const FORGET_DELETE_DAYS = 90;
+
+/** Cosine similarity above which two low-confidence memories are considered redundant */
+const REDUNDANCY_THRESHOLD = 0.85;
+
+/** Max redundant memories to prune per cycle (gradual, not sudden) */
+const MAX_REDUNDANCY_PRUNE_PER_CYCLE = 10;
+
+/** Max confidence drift per consolidation cycle (prevents runaway) */
+const CONFIDENCE_DRIFT_CAP = 0.03;
+
+/** Days without recall before confidence starts drifting down */
+const CONFIDENCE_NEGLECT_DAYS = 30;
+
+export interface ConsolidationResult {
+  clustersFound: number;
+  edgesStrengthened: number;
+  edgesCreated: number;
+  bridgesCreated: number;
+  edgesDecayed: number;
+  edgesPruned: number;
+  edgesNormalized: number;
+  memoriesForgotten: number;
+  memoriesArchived: number;
+  redundancyPruned: number;
+  confidenceAdjusted: number;
+  contradictionsFound: number;
+  stagingPromoted: number;
+  stagingDiscarded: number;
+  engramsProcessed: number;
+}
+
+export class ConsolidationEngine {
+  private store: EngramStore;
+
+  constructor(store: EngramStore) {
+    this.store = store;
+  }
+
+  /**
+   * Run a full sleep cycle for an agent.
+   *
+   * Phase 1: Replay — find clusters of semantically similar memories
+   * Phase 2: Strengthen — reinforce edges within clusters (access-weighted)
+   * Phase 3: Bridge — create cross-cluster shortcuts
+   * Phase 4: Decay — weaken unused edges, prune dead ones
+   * Phase 5: Homeostasis — normalize outgoing edge weights per node
+   * Phase 6: Forget — archive/delete memories never retrieved (age-gated)
+   * Phase 6.7: Confidence drift — adjust confidence based on structural signals
+   * Phase 7: Sweep — check staging buffer for resonance
+   */
+  async consolidate(agentId: string): Promise<ConsolidationResult> {
+    const result: ConsolidationResult = {
+      clustersFound: 0,
+      edgesStrengthened: 0,
+      edgesCreated: 0,
+      bridgesCreated: 0,
+      edgesDecayed: 0,
+      edgesPruned: 0,
+      edgesNormalized: 0,
+      memoriesForgotten: 0,
+      memoriesArchived: 0,
+      redundancyPruned: 0,
+      confidenceAdjusted: 0,
+      contradictionsFound: 0,
+      stagingPromoted: 0,
+      stagingDiscarded: 0,
+      engramsProcessed: 0,
+    };
+
+    // --- Phase 1: Replay ---
+    // Get all active engrams, backfill missing embeddings if needed
+    const allActive = this.store.getEngramsByAgent(agentId, 'active');
+    const needsEmbedding = allActive.filter(e => !e.embedding || e.embedding.length === 0);
+
+    // Backfill embeddings for engrams that were written async and haven't been retrieved yet
+    if (needsEmbedding.length > 0) {
+      try {
+        const { embed } = await import('../core/embeddings.js');
+        for (const e of needsEmbedding) {
+          try {
+            const vec = await embed(`${e.concept} ${e.content}`);
+            this.store.updateEmbedding(e.id, vec);
+            e.embedding = vec;
+          } catch { /* embedding failure is non-fatal */ }
+        }
+      } catch { /* embeddings module unavailable */ }
+    }
+
+    const engrams = allActive.filter(e => e.embedding && e.embedding.length > 0);
+
+    // Diagnostic: embedding coverage
+    if (allActive.length > 0) {
+      console.log(`[consolidation] embedding coverage: ${engrams.length}/${allActive.length} (${(engrams.length / allActive.length * 100).toFixed(0)}%)`);
+    }
+
+    result.engramsProcessed = engrams.length;
+    if (engrams.length < 2) return result;
+
+    // Find clusters of related memories
+    const clusters = this.findClusters(engrams);
+    result.clustersFound = clusters.length;
+
+    // Diagnostic: cluster and boundary stats
+    if (clusters.length >= 2) {
+      const centroids = clusters.map(c => this.computeCentroid(c));
+      let boundaryCount = 0;
+      for (let i = 0; i < clusters.length; i++) {
+        for (const e of clusters[i]) {
+          if (!e.embedding) continue;
+          const ownSim = cosineSimilarity(e.embedding, centroids[i]);
+          let maxOther = -1;
+          for (let j = 0; j < centroids.length; j++) {
+            if (j !== i) maxOther = Math.max(maxOther, cosineSimilarity(e.embedding, centroids[j]));
+          }
+          if (maxOther > ownSim - 0.02) boundaryCount++;
+        }
+      }
+      console.log(`[consolidation] clusters=${clusters.length} sizes=[${clusters.map(c => c.length).join(',')}] boundary_nodes=${boundaryCount}`);
+    }
+
+    // --- Phase 1.5: Contradiction detection (v0.5.0) ---
+    // For clusters with 3+ members, check for conflicting memories.
+    // Pure heuristic — no LLM. Flags only, does not auto-retract.
+    for (const cluster of clusters) {
+      if (cluster.length < 3) continue;
+      for (let i = 0; i < cluster.length; i++) {
+        for (let j = i + 1; j < cluster.length; j++) {
+          const a = cluster[i];
+          const b = cluster[j];
+          if (a.stage === 'profile' || b.stage === 'profile') continue;
+          const confDelta = Math.abs(a.confidence - b.confidence);
+          if (confDelta < 0.2) continue;
+          if (this.hasContradictionSignal(a.content, b.content)) {
+            const suspect = a.confidence < b.confidence ? a : b;
+            const authority = a.confidence < b.confidence ? b : a;
+            if (!suspect.tags.includes('contradiction_candidate')) {
+              this.store.updateTags(suspect.id, [
+                ...suspect.tags,
+                'contradiction_candidate',
+                `contradicts:${authority.id}`,
+              ]);
+              result.contradictionsFound++;
+            }
+          }
+        }
+      }
+    }
+
+    // --- Phase 2: Strengthen (access-weighted) ---
+    // Memories that are retrieved more often get stronger consolidation.
+    // This mirrors how the brain preferentially consolidates practiced memories.
+    let newEdges = 0;
+    for (const cluster of clusters) {
+      for (let i = 0; i < cluster.length; i++) {
+        for (let j = i + 1; j < cluster.length; j++) {
+          const a = cluster[i];
+          const b = cluster[j];
+
+          // Access-weighted signal: more retrieved = stronger consolidation
+          const accessFactor = Math.min(
+            1.0,
+            0.3 + 0.7 * Math.log1p(a.accessCount + b.accessCount) / Math.log1p(20),
+          );
+
+          const existing = this.store.getAssociation(a.id, b.id);
+          if (existing) {
+            const newWeight = strengthenAssociation(
+              existing.weight, CONSOLIDATION_SIGNAL * accessFactor, 0.25,
+            );
+            this.store.upsertAssociation(
+              a.id, b.id, newWeight, existing.type, existing.confidence,
+            );
+            result.edgesStrengthened++;
+          } else if (newEdges < MAX_NEW_EDGES_PER_CYCLE) {
+            this.store.upsertAssociation(
+              a.id, b.id, INITIAL_EDGE_WEIGHT * accessFactor, 'connection',
+            );
+            newEdges++;
+            result.edgesCreated++;
+          }
+        }
+      }
+    }
+
+    // --- Phase 3: Boundary-node bridge edges ---
+    // Cognitive inspiration: associative binding + structural-hole detection.
+    // Instead of comparing cluster centroids (too blunt — never triggers),
+    // find boundary nodes: memories closer to another cluster than their own.
+    // Bridge boundary nodes across clusters when they share mid-range similarity.
+    if (clusters.length >= 2) {
+      const centroids = clusters.map(cluster => this.computeCentroid(cluster));
+      result.bridgesCreated += this.findBoundaryBridges(clusters, centroids);
+    }
+
+    // --- Phase 4: Decay (confidence-modulated) ---
+    // High-confidence edges decay slower. This means edges between memories
+    // that received positive feedback are more durable — just like how
+    // practiced memories are more resistant to forgetting in the brain.
+    // Base half-life: 7 days. High-confidence (0.8+) gets up to 30 days.
+    const engramConfMap = new Map(engrams.map(e => [e.id, e.confidence]));
+    const associations = this.store.getAllAssociations(agentId);
+    for (const assoc of associations) {
+      const daysSince =
+        (Date.now() - assoc.lastActivated.getTime()) / (1000 * 60 * 60 * 24);
+      if (daysSince < 0.5) continue; // Skip recently activated
+
+      // Confidence-modulated half-life: higher confidence = slower decay (capped at 3x)
+      // Base: 7 days. Conf 0.5 → 7 days. Conf 0.8 → ~15 days. Conf 1.0 → 21 days (3x).
+      // Cap prevents any edge from becoming immortal.
+      const fromConf = engramConfMap.get(assoc.fromEngramId) ?? 0.5;
+      const toConf = engramConfMap.get(assoc.toEngramId) ?? 0.5;
+      const maxConf = Math.max(fromConf, toConf);
+      const halfLifeDays = Math.min(7 * (1 + 2 * Math.max(0, (maxConf - 0.5) / 0.5)), 21);
+
+      const newWeight = decayAssociation(assoc.weight, daysSince, halfLifeDays);
+      if (newWeight < PRUNE_THRESHOLD) {
+        this.store.deleteAssociation(assoc.id);
+        result.edgesPruned++;
+      } else if (Math.abs(newWeight - assoc.weight) > 0.001) {
+        this.store.upsertAssociation(
+          assoc.fromEngramId, assoc.toEngramId,
+          newWeight, assoc.type, assoc.confidence,
+        );
+        result.edgesDecayed++;
+      }
+    }
+
+    // --- Phase 5: Synaptic homeostasis ---
+    // Normalize total outgoing edge weight per node to prevent hub explosion.
+    // Nodes with many strong edges get scaled down so relative weights stay meaningful.
+    const engramIds = new Set(engrams.map(e => e.id));
+    for (const id of engramIds) {
+      const outgoing = this.store.getOutgoingAssociations(id);
+      const totalWeight = outgoing.reduce((sum, a) => sum + a.weight, 0);
+      if (totalWeight > HOMEOSTASIS_TARGET) {
+        const scale = HOMEOSTASIS_TARGET / totalWeight;
+        for (const edge of outgoing) {
+          const newWeight = edge.weight * scale;
+          if (newWeight < PRUNE_THRESHOLD) {
+            this.store.deleteAssociation(edge.id);
+            result.edgesPruned++;
+          } else {
+            this.store.upsertAssociation(
+              edge.fromEngramId, edge.toEngramId,
+              newWeight, edge.type, edge.confidence,
+            );
+          }
+        }
+        result.edgesNormalized++;
+      }
+    }
+
+    // --- Phase 6: Forgetting (age-gated) ---
+    // Models how human memory actually works:
+    // - New memories get a grace period (too new to judge)
+    // - Retrieval acts as rehearsal — resets the forgetting clock
+    // - Well-connected memories persist (edges = integration into knowledge)
+    // - Old, isolated, unretrieved memories fade to archive (not deleted)
+    // - Archived memories can still be recovered via deep search
+    // - Only truly orphaned, ancient memories get deleted
+    //
+    // Key insight: outdated memories still have value as historical context.
+    // "We used to use X" helps explain why we now use Y.
+    for (const engram of engrams) {
+      if (engram.stage === 'profile') continue; // Profiles never age out (v0.5.0)
+      const ageDays = (Date.now() - engram.createdAt.getTime()) / (1000 * 60 * 60 * 24);
+      if (ageDays < FORGET_GRACE_DAYS) continue; // Grace period — too new to judge
+
+      const edgeCount = this.store.countAssociationsFor(engram.id);
+
+      // Connections keep memories alive — well-integrated knowledge persists.
+      // High-confidence memories (feedback-confirmed) need fewer edges to survive.
+      // Models a senior dev who remembers standalone important facts.
+      // Default: 3 edges. At conf 0.7: 2 edges. At conf 0.8+: 1 edge.
+      const edgeProtectionThreshold = engram.confidence > 0.7
+        ? Math.max(1, Math.round(3 - 4 * (engram.confidence - 0.5)))
+        : 3;
+      if (edgeCount > edgeProtectionThreshold) continue;
+
+      // Compute effective forgetting threshold based on memory strength signals.
+      // Rehearsal (access + feedback) extends protection but NEVER makes immortal.
+      // Models a sharp 20-year senior dev: confirmed knowledge persists for months/years.
+      // - Base: FORGET_ARCHIVE_DAYS (30 days)
+      // - Access extends by log-scaled factor: 5 accesses ≈ 2x, 10 ≈ 2.5x
+      // - Confidence modulates up to 4x (0.5→1x, 0.7→2.6x, 0.8→3.4x, 1.0→4x)
+      // - Hard cap: 12x base (360 days) — even the sharpest memory fades after a year
+      const accessFactor = 1 + Math.log1p(engram.accessCount) * 0.6;
+      const confFactor = 1 + 3 * Math.max(0, (engram.confidence - 0.5) / 0.5);
+      const effectiveArchiveDays = Math.min(
+        FORGET_ARCHIVE_DAYS * accessFactor * confFactor,
+        FORGET_ARCHIVE_DAYS * 12,  // Hard cap: 12x base (360 days)
+      );
+
+      const daysSinceAccess = (Date.now() - engram.lastAccessed.getTime()) / (1000 * 60 * 60 * 24);
+
+      if (engram.accessCount === 0 && ageDays > FORGET_ARCHIVE_DAYS) {
+        // Never retrieved, old, weakly connected → archive
+        this.store.updateStage(engram.id, 'archived');
+        result.memoriesArchived++;
+      } else if (engram.accessCount > 0 && daysSinceAccess > effectiveArchiveDays) {
+        // Accessed before but not recently enough given its strength — archive
+        this.store.updateStage(engram.id, 'archived');
+        result.memoriesArchived++;
+      }
+    }
+
+    // Check archived memories for deletion — only truly orphaned ancient ones
+    const archived = this.store.getEngramsByAgent(agentId, 'archived');
+    for (const engram of archived) {
+      const ageDays = (Date.now() - engram.createdAt.getTime()) / (1000 * 60 * 60 * 24);
+      const edgeCount = this.store.countAssociationsFor(engram.id);
+
+      if (engram.accessCount === 0 && ageDays > FORGET_DELETE_DAYS && edgeCount === 0) {
+        // Very old, never accessed, completely isolated → truly forgotten
+        this.store.deleteEngram(engram.id);
+        result.memoriesForgotten++;
+      }
+      // Otherwise: stay archived — still searchable, just not in active recall
+    }
+
+    // --- Phase 6.5: Redundancy pruning ---
+    // A senior dev doesn't store 30 nearly-identical memories. When multiple
+    // low-confidence memories are semantically redundant (cosine > 0.85), keep
+    // only the one with highest accessCount + confidence and archive the rest.
+    // This naturally defeats volume-based attacks (narcissistic interference,
+    // spam) while improving signal-to-noise ratio for linked memories.
+    // High-confidence memories (feedback-confirmed) are never pruned — they
+    // represent verified knowledge worth keeping even if similar.
+    // Only consider memories that are both low-confidence AND rarely accessed.
+    // Memories retrieved 3+ times have proven useful — they stay even if similar
+    // to others. This prevents pruning seed memories that match bulk templates.
+    const lowConfEngrams = engrams.filter(e =>
+      e.confidence < 0.6 && e.accessCount < 3 && e.embedding && e.embedding.length > 0);
+    const pruned = new Set<string>();
+    let redundancyCount = 0;
+
+    // Sort by quality: highest accessCount + confidence first (survivors)
+    const sortedLow = [...lowConfEngrams].sort((a, b) =>
+      (b.accessCount + b.confidence * 10) - (a.accessCount + a.confidence * 10));
+
+    for (let i = 0; i < sortedLow.length && redundancyCount < MAX_REDUNDANCY_PRUNE_PER_CYCLE; i++) {
+      if (pruned.has(sortedLow[i].id)) continue;
+      for (let j = i + 1; j < sortedLow.length && redundancyCount < MAX_REDUNDANCY_PRUNE_PER_CYCLE; j++) {
+        if (pruned.has(sortedLow[j].id)) continue;
+        if (!sortedLow[i].embedding || !sortedLow[j].embedding) continue;
+
+        const sim = cosineSimilarity(sortedLow[i].embedding!, sortedLow[j].embedding!);
+        if (sim >= REDUNDANCY_THRESHOLD) {
+          // Archive the lower-quality duplicate
+          this.store.updateStage(sortedLow[j].id, 'archived');
+          pruned.add(sortedLow[j].id);
+          redundancyCount++;
+        }
+      }
+    }
+    result.redundancyPruned = redundancyCount;
+
+    // --- Phase 6.7: Confidence drift ---
+    // Adjust confidence based on structural signals that emerge from the graph.
+    // This makes confidence evolve over time without explicit feedback calls.
+    //
+    // Three signals:
+    //   1. Well-clustered memories (appeared in 1+ clusters) get a small boost
+    //      — they're integrated into the knowledge graph, likely valuable.
+    //   2. Isolated memories (0 edges after consolidation) get a small penalty
+    //      — nothing connects to them, possibly noise.
+    //   3. Neglected memories (not recalled in 30+ days) drift toward 0.3
+    //      — if the system never needs them, they're probably not important.
+    //
+    // All adjustments are capped at ±0.03 per cycle to prevent runaway.
+    // Confidence is floored at 0.15 (never reaches 0 — retraction handles that).
+    // Confidence is capped at 0.85 (only explicit feedback can push above).
+    const clusteredIds = new Set<string>();
+    for (const cluster of clusters) {
+      for (const e of cluster) clusteredIds.add(e.id);
+    }
+
+    for (const engram of engrams) {
+      let drift = 0;
+      const edgeCount = this.store.countAssociationsFor(engram.id);
+      const daysSinceAccess = (Date.now() - engram.lastAccessed.getTime()) / (1000 * 60 * 60 * 24);
+
+      // Signal 1: Cluster membership → small boost
+      if (clusteredIds.has(engram.id)) {
+        drift += 0.01;
+      }
+
+      // Signal 2: Zero edges → small penalty
+      if (edgeCount === 0) {
+        drift -= 0.02;
+      }
+
+      // Signal 3: Long neglect → drift toward 0.3
+      if (daysSinceAccess > CONFIDENCE_NEGLECT_DAYS && engram.confidence > 0.3) {
+        drift -= 0.01;
+      }
+
+      // Apply with cap
+      if (Math.abs(drift) > 0.001) {
+        drift = Math.max(-CONFIDENCE_DRIFT_CAP, Math.min(CONFIDENCE_DRIFT_CAP, drift));
+        const newConf = Math.max(0.15, Math.min(0.85, engram.confidence + drift));
+        if (Math.abs(newConf - engram.confidence) > 0.001) {
+          this.store.updateConfidence(engram.id, newConf);
+          result.confidenceAdjusted++;
+        }
+      }
+    }
+
+    // --- Phase 7: Sweep staging ---
+    const staging = this.store.getEngramsByAgent(agentId, 'staging')
+      .filter(e => e.embedding && e.embedding.length > 0);
+
+    for (const staged of staging) {
+      const ageMs = Date.now() - staged.createdAt.getTime();
+
+      // Check if this staging memory resonates with any active memory
+      let maxSim = 0;
+      for (const active of engrams) {
+        if (!active.embedding || !staged.embedding) continue;
+        const sim = cosineSimilarity(staged.embedding, active.embedding);
+        if (sim > maxSim) maxSim = sim;
+      }
+
+      if (maxSim >= 0.6) {
+        // Resonates — promote to active with low confidence (barely made it)
+        this.store.updateStage(staged.id, 'active');
+        this.store.updateConfidence(staged.id, 0.40);
+        result.stagingPromoted++;
+      } else if (ageMs > 24 * 60 * 60 * 1000) {
+        // Over 24h and no resonance — discard
+        this.store.deleteEngram(staged.id);
+        result.stagingDiscarded++;
+      }
+      // Otherwise: leave in staging, maybe next cycle
+    }
+
+    return result;
+  }
+
+  /**
+   * Find clusters of semantically similar memories.
+   * Greedy agglomerative — each memory belongs to at most one cluster.
+   * Clusters of size 2+ are returned (pairs count — they link).
+   */
+  /**
+   * Boundary-node bridging — finds memories at cluster edges and bridges them.
+   *
+   * A boundary node is a memory whose embedding is closer to another cluster's
+   * centroid than to its own. These are the natural cross-topic connectors.
+   * Bridge when two boundary nodes from different clusters have mid-range
+   * similarity (not too similar = same topic, not too different = unrelated).
+   *
+   * Direct cross-cluster bridging — finds the most similar memory pair between
+   * each pair of clusters and bridges them if cosine > MIN_BRIDGE_SIM.
+   * Simple and effective: no boundary detection needed for small cluster counts.
+   */
+  private findBoundaryBridges(clusters: Engram[][], _centroids: number[][]): number {
+    const MIN_BRIDGE_SIM = 0.15; // Low threshold — any cross-topic connection is valuable
+
+    let bridges = 0;
+    for (let i = 0; i < clusters.length && bridges < MAX_BRIDGE_EDGES_PER_CYCLE; i++) {
+      for (let j = i + 1; j < clusters.length && bridges < MAX_BRIDGE_EDGES_PER_CYCLE; j++) {
+        // Find the closest pair between cluster i and cluster j
+        let bestSim = -1;
+        let bestA: Engram | null = null;
+        let bestB: Engram | null = null;
+
+        for (const a of clusters[i]) {
+          if (!a.embedding) continue;
+          for (const b of clusters[j]) {
+            if (!b.embedding) continue;
+            const sim = cosineSimilarity(a.embedding, b.embedding);
+            if (sim > bestSim) {
+              bestSim = sim;
+              bestA = a;
+              bestB = b;
+            }
+          }
+        }
+
+        if (bestA && bestB && bestSim > MIN_BRIDGE_SIM) {
+          const existing = this.store.getAssociation(bestA.id, bestB.id);
+          if (!existing) {
+            this.store.upsertAssociation(bestA.id, bestB.id, bestSim, 'bridge');
+            this.store.upsertAssociation(bestB.id, bestA.id, bestSim, 'bridge');
+            bridges++;
+            console.log(`[consolidation] bridge: "${bestA.concept}" ↔ "${bestB.concept}" (sim=${bestSim.toFixed(3)})`);
+          }
+        }
+      }
+    }
+    return bridges;
+  }
+
+  /**
+   * Heuristic contradiction check — no LLM, purely keyword-based.
+   * Returns true if one text has negation patterns the other doesn't.
+   */
+  private hasContradictionSignal(contentA: string, contentB: string): boolean {
+    const negationPatterns = [
+      /\bnot\b/i, /\bnever\b/i, /\bno longer\b/i, /\bstopped\b/i,
+      /\bremoved\b/i, /\bdeprecated\b/i, /\binstead\b/i, /\breplaced\b/i,
+      /\bwrong\b/i, /\bincorrect\b/i, /\bactually\b/i,
+      /\bdon't\b/i, /\bdoesn't\b/i, /\bisn't\b/i, /\bwasn't\b/i,
+    ];
+
+    const aHasNegation = negationPatterns.some(p => p.test(contentA));
+    const bHasNegation = negationPatterns.some(p => p.test(contentB));
+
+    // Different negation polarity is a contradiction signal
+    return aHasNegation !== bHasNegation;
+  }
+
+  /**
+   * Diameter-enforced greedy clustering.
+   *
+   * Uses single-link entry (cosine ≥ SIMILARITY_THRESHOLD to any member)
+   * but enforces complete-link diameter (cosine ≥ MIN_PAIRWISE_COS to ALL members).
+   * This prevents the chaining problem where physics→biophysics→cooking = 1 cluster.
+   *
+   * Precomputes cosine similarity matrix for speed (~O(n²) but n is small).
+   */
+  private findClusters(engrams: Engram[]): Engram[][] {
+    const n = engrams.length;
+    if (n < 2) return [];
+
+    // Precompute pairwise cosine matrix
+    const sim: number[][] = Array.from({ length: n }, () => Array(n).fill(0));
+    for (let i = 0; i < n; i++) {
+      sim[i][i] = 1;
+      for (let j = i + 1; j < n; j++) {
+        if (!engrams[i].embedding || !engrams[j].embedding) continue;
+        const c = cosineSimilarity(engrams[i].embedding!, engrams[j].embedding!);
+        sim[i][j] = c;
+        sim[j][i] = c;
+      }
+    }
+
+    const unassigned = new Set<number>(Array.from({ length: n }, (_, i) => i));
+    const clusters: Engram[][] = [];
+
+    // Seed from most-accessed memories (strongest traces)
+    const sortedIdxs = Array.from({ length: n }, (_, i) => i)
+      .sort((a, b) => engrams[b].accessCount - engrams[a].accessCount);
+
+    for (const seedIdx of sortedIdxs) {
+      if (!unassigned.has(seedIdx)) continue;
+      unassigned.delete(seedIdx);
+
+      const clusterIdxs: number[] = [seedIdx];
+      let added = true;
+
+      while (added) {
+        added = false;
+        for (const candIdx of Array.from(unassigned)) {
+          // Single-link entry: must be similar to at least one member
+          let links = false;
+          for (const m of clusterIdxs) {
+            if (sim[candIdx][m] >= SIMILARITY_THRESHOLD) { links = true; break; }
+          }
+          if (!links) continue;
+
+          // Diameter enforcement: must be similar to ALL members
+          let passesAll = true;
+          for (const m of clusterIdxs) {
+            if (sim[candIdx][m] < MIN_PAIRWISE_COS) { passesAll = false; break; }
+          }
+          if (!passesAll) continue;
+
+          clusterIdxs.push(candIdx);
+          unassigned.delete(candIdx);
+          added = true;
+        }
+      }
+
+      if (clusterIdxs.length >= 2) {
+        clusters.push(clusterIdxs.map(i => engrams[i]));
+      } else {
+        unassigned.add(seedIdx); // Release singleton back
+      }
+    }
+
+    return clusters;
+  }
+
+  /**
+   * Compute the centroid (average embedding) of a cluster.
+   */
+  private computeCentroid(cluster: Engram[]): number[] {
+    const withEmbed = cluster.filter(e => e.embedding && e.embedding.length > 0);
+    if (withEmbed.length === 0) return [];
+
+    const dim = withEmbed[0].embedding!.length;
+    const centroid = new Array<number>(dim).fill(0);
+    for (const e of withEmbed) {
+      for (let i = 0; i < dim; i++) {
+        centroid[i] += e.embedding![i];
+      }
+    }
+    for (let i = 0; i < dim; i++) {
+      centroid[i] /= withEmbed.length;
+    }
+    return centroid;
+  }
+}
