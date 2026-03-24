@@ -1,11 +1,27 @@
 @echo off
+setlocal EnableDelayedExpansion
 :: Graceful shutdown: broadcast SHUTDOWN to agents, wait for idle, then stop services
-:: Usage: shutdown.bat [--now]
+:: Usage: shutdown.bat [workspace] [--now]
+::   shutdown.bat              — global shutdown (all workspaces + kill coordinator)
+::   shutdown.bat equihub      — shutdown equihub agents only (coordinator stays running)
+::   shutdown.bat --now        — global shutdown, skip wait
+::   shutdown.bat equihub --now
 
 echo.
 echo  AgentSynapse Graceful Shutdown
 echo  ==============================
 echo.
+
+:: Parse args: workspace and --now flag
+set WS_ARG=
+set SKIP_WAIT=0
+for %%A in (%*) do (
+    if /i "%%A"=="--now" (
+        set SKIP_WAIT=1
+    ) else (
+        set WS_ARG=%%A
+    )
+)
 
 :: Check if coordinator is running
 curl -s --max-time 2 http://127.0.0.1:8410/health >nul 2>&1
@@ -16,6 +32,18 @@ if %errorlevel% neq 0 (
     exit /b 0
 )
 
+:: Build workspace-specific JSON and query params
+if defined WS_ARG (
+    set WS_JSON=,"workspace":"%WS_ARG%"
+    set WS_QUERY=?workspace=%WS_ARG%
+    echo  Workspace: %WS_ARG% (agents only — coordinator stays running)
+) else (
+    set WS_JSON=
+    set WS_QUERY=
+    echo  Scope: ALL workspaces + coordinator
+)
+echo.
+
 :: Step 1: Show current hive status
 echo  Current hive status:
 curl -s http://127.0.0.1:8410/status 2>nul
@@ -23,8 +51,8 @@ echo.
 echo.
 
 :: Step 2: Broadcast SHUTDOWN command
-echo  Broadcasting SHUTDOWN to all agents...
-curl -s -X POST http://127.0.0.1:8410/command -H "Content-Type: application/json" -d "{\"command\":\"SHUTDOWN\",\"reason\":\"graceful shutdown via launcher\",\"issuedBy\":\"cli\"}" >nul 2>&1
+echo  Broadcasting SHUTDOWN...
+curl -s -X POST http://127.0.0.1:8410/command -H "Content-Type: application/json" -d "{\"command\":\"SHUTDOWN\",\"reason\":\"graceful shutdown via launcher\",\"issuedBy\":\"cli\"%WS_JSON%}" >nul 2>&1
 if %errorlevel% equ 0 (
     echo    SHUTDOWN broadcast sent.
 ) else (
@@ -33,7 +61,7 @@ if %errorlevel% equ 0 (
 echo.
 
 :: Step 3: Skip wait if --now
-if /i "%~1"=="--now" (
+if "%SKIP_WAIT%"=="1" (
     echo  --now flag: skipping wait.
     goto :stop_services
 )
@@ -46,8 +74,7 @@ set TRIES=0
 timeout /t 3 /nobreak >nul
 set /a TRIES+=1
 
-:: Check if all agents are idle
-for /f "delims=" %%R in ('curl -s --max-time 2 "http://127.0.0.1:8410/command/wait?status=idle" 2^>nul') do (
+for /f "delims=" %%R in ('curl -s --max-time 2 "http://127.0.0.1:8410/command/wait%WS_QUERY%" 2^>nul') do (
     echo %%R | findstr /i "\"allReady\":true" >nul 2>&1
     if not errorlevel 1 (
         echo    All agents idle — safe to stop.
@@ -63,13 +90,17 @@ if %TRIES% lss 20 (
 echo    Timeout — proceeding with stop.
 
 :stop_services
-echo.
-echo  Stopping services...
-
-:: Kill coordinator
-for /f "delims=" %%P in ('curl -s http://127.0.0.1:8410/health 2^>nul ^| findstr /r "."') do (
-    echo    Shutting down coordinator...
+:: If workspace-scoped, don't kill coordinator
+if defined WS_ARG (
+    echo.
+    echo  Workspace %WS_ARG% agents shut down. Coordinator still running.
+    echo.
+    pause
+    exit /b 0
 )
+
+echo.
+echo  Stopping coordinator...
 
 :: Find and kill node processes on known ports
 for %%P in (8410 8420 8400) do (

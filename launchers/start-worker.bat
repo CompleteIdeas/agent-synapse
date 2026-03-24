@@ -36,14 +36,14 @@ if %errorlevel% neq 0 (
 :: Handle orchestrator specially
 if /i "%~1"=="orchestrator" (
     title HIVE: Orchestrator [%PROJECT_DIR%]
-    claude --dangerously-skip-permissions --agent orchestrator --append-system-prompt "YOUR IDENTITY: You are the ORCHESTRATOR. Display this at the start of every response: [ORCHESTRATOR]. You manage the hive. NEVER use the Agent tool. NEVER spawn subagents or background tasks. You NEVER do substantive work yourself — ALL work is assigned to workers or the Dev-Lead. Check GET /workers to see who's online before assigning work. PROJECT DIRECTORY: %PROJECT_DIR%" "Execute hive protocol: read synapse.config.json for mode and services, checkin to coordinator, memory_restore. Then WAIT for workers — poll GET /workers every 10 seconds until at least 2 workers show alive:true (up to 60s). Only after workers are online, report the hive status and ask me what to assign."
+    claude --dangerously-skip-permissions --agent orchestrator --append-system-prompt "YOUR IDENTITY: You are the ORCHESTRATOR. Display [ORCHESTRATOR] at the start of every response. PROJECT DIRECTORY: %PROJECT_DIR%" "Begin hive protocol."
     exit /b 0
 )
 
 :: Handle dev-lead specially
 if /i "%~1"=="dev-lead" (
     title HIVE: Dev-Lead [%PROJECT_DIR%]
-    claude --dangerously-skip-permissions --agent dev-lead --append-system-prompt "YOUR IDENTITY: You are the Dev-Lead. Display this at the start of every response: [DEV-LEAD]. You read, analyze, and scope work — then report task breakdowns back to the orchestrator. You NEVER implement or edit files. PROJECT DIRECTORY: %PROJECT_DIR%" "Execute hive protocol: checkin to coordinator as Dev-Lead, check commands, memory_restore, GET /assignment. If no task, enter idle poll loop (every 30s). Never exit until SHUTDOWN."
+    claude --dangerously-skip-permissions --agent dev-lead --append-system-prompt "YOUR IDENTITY: You are the DEV-LEAD. Display [DEV-LEAD] at the start of every response. PROJECT DIRECTORY: %PROJECT_DIR%" "Begin hive protocol."
     exit /b 0
 )
 
@@ -67,4 +67,4 @@ title HIVE: %WORKER_NAME% [%PROJECT_DIR%]
 set WORKER_NAME=%WORKER_NAME%
 
 :: Launch generic worker with identity
-claude --dangerously-skip-permissions --agent worker --append-system-prompt "YOUR IDENTITY: You are %WORKER_NAME%. Display this at the start of every response: [%WORKER_NAME%]. Set WORKER_NAME=%WORKER_NAME% for all checkin calls. You are a generic worker — your role is determined by whatever task the orchestrator assigns you. PROJECT DIRECTORY: %PROJECT_DIR%" "Execute hive protocol: checkin to coordinator as %WORKER_NAME%, check commands, memory_restore, GET /assignment. If no task, enter idle poll loop (every 30s). Never exit until SHUTDOWN."
+claude --dangerously-skip-permissions --agent worker --append-system-prompt "YOUR IDENTITY: You are %WORKER_NAME%. Display [%WORKER_NAME%] at the start of every response. WORKER_NAME=%WORKER_NAME% for all checkin calls. PROJECT DIRECTORY: %PROJECT_DIR%" "Begin hive protocol."
