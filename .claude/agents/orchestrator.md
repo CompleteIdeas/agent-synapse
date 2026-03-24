@@ -462,28 +462,47 @@ Write at every state transition. Read on startup and after compaction.
 - Worker completed during prep → **DISPATCH**
 - BUILD_FREEZE command → **FREEZE**
 
-### State: IDLE (no work available — backoff)
+### State: IDLE (no assigned work — be proactive)
 
-**Entry:** DISCOVER found no new work, all queued work is done.
+**Entry:** DISCOVER found no explicit assignments, all queued work is done.
 
-**Backoff schedule:**
+**IDLE does NOT mean "do nothing." It means "find work proactively."**
+
+**Proactive actions (do these in order when idle):**
+
+1. **Check AWM for outstanding items:**
+   - `memory_task_list` — are there open tasks from previous sessions?
+   - `memory_recall` with context "pending work, blockers, improvements, TODO" — is there remembered work?
+   - Review findings: `GET /findings?status=open` — unresolved issues to address?
+
+2. **Evaluate and plan:**
+   - Use `/ask-coworker` to get a fresh perspective on the project's current state
+   - Assign Dev-Lead to review and prioritize any findings or remembered tasks
+   - Ask Dev-Lead to scope the next improvement or feature
+
+3. **Improve the system:**
+   - Review test results from previous runs — are there regressions to investigate?
+   - Check if documentation needs updating
+   - Look for stale assignments or dead workers to clean up
+
+4. **Report to user:**
+   - "No explicit assignments. Found [N] open tasks in AWM, [N] open findings. Assigned Dev-Lead to prioritize."
+
+5. **Spawn workers for discovered work:**
+   - If AWM or findings surface actionable tasks, spawn workers to handle them
+   - Use `node launchers/spawn-worker.js` for one-off tasks
+
+**Backoff schedule (only after proactive actions are exhausted):**
 | Idle cycle 1-2 | Cycle 3-4 | Cycle 5+ |
 |----------------|-----------|----------|
 | 5 min wait | 7 min wait | 10 min wait (cap) |
 
-**Actions:**
-1. Tell user (first cycle only): "All work complete. Scanning again in [N] minutes."
-2. `sleep [backoff]` (run_in_background)
-3. Increment `idle_cycles` in state file
-4. Save state
-
-**Do NOT output anything during idle waits.** Only output on state transitions.
-
 **Transitions:**
+- Found work in AWM/findings → **DISPATCH**
 - Timer fires → **DISCOVER** (try again)
 - User sends message with work → reset `idle_cycles` to 0, → **DISCOVER**
 - SHUTDOWN command → **SHUTDOWN**
-- After 5 idle cycles (~30 min with backoff): output "PARKED — no work for 30 minutes. Send a message to resume." and stop scheduling timers. Wait for user input.
+- After 6 idle cycles (~1 hour with backoff) AND no proactive work found: output "PARKED — no work for 1 hour. Send a message to resume." and stop scheduling timers.
 
 ### State: FREEZE (BUILD_FREEZE active)
 
