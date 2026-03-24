@@ -1,7 +1,8 @@
 {
   "name": "@agent-synapse/coordinator",
   "version": "0.1.0",
-  "description": "Multi-agent coordination service — dispatch, file locks, heartbeats, worker discovery",
+  "description": "DEPRECATED — coordination is now built into AWM (packages/awm) via AWM_COORDINATION=true. This package is kept as reference only.",
+  "deprecated": "Use packages/awm with AWM_COORDINATION=true instead",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",

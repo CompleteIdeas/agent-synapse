@@ -1,16 +1,22 @@
 {
   "name": "agent-synapse",
   "version": "0.1.0",
-  "description": "Multi-agent orchestration with persistent memory for Claude Code",
+  "description": "Multi-agent coordination with persistent memory for Claude Code",
   "type": "module",
+  "workspaces": [
+    "packages/awm",
+    "packages/coordinator",
+    "packages/task-manager",
+    "packages/memory-client"
+  ],
   "bin": {
     "agent-synapse": "bin/synapse.js"
   },
   "scripts": {
-    "dev": "node packages/coordinator/dist/index.js & node packages/task-manager/dist/index.js",
-    "dev:coordinator": "npx tsx packages/coordinator/src/index.ts",
+    "dev": "AWM_COORDINATION=true npx tsx packages/awm/src/index.ts",
+    "dev:awm": "AWM_COORDINATION=true npx tsx packages/awm/src/index.ts",
     "dev:task-manager": "npx tsx packages/task-manager/src/index.ts",
-    "build": "npx -p typescript tsc -p packages/memory-client && npx -p typescript tsc -p packages/coordinator && npx -p typescript tsc -p packages/task-manager",
+    "build": "npm run build --workspaces --if-present",
     "prepare": "npm run build || echo build skipped"
   },
   "engines": {
@@ -19,7 +25,7 @@
   "keywords": [
     "ai-agents",
     "multi-agent",
-    "orchestration",
+    "coordination",
     "memory",
     "claude",
     "claude-code",
