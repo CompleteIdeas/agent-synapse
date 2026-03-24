@@ -6,11 +6,12 @@
  * Runs as a stdio-based MCP server that Claude Code connects to directly.
  * Uses the storage and engine layers in-process (no HTTP overhead).
  *
- * Tools exposed (11):
+ * Tools exposed (12):
  *   memory_write       — store a memory (salience filter decides disposition)
  *   memory_recall      — activate memories by context (cognitive retrieval)
  *   memory_feedback    — report whether a recalled memory was useful
  *   memory_retract     — invalidate a wrong memory with optional correction
+ *   memory_supersede   — replace an outdated memory with a current one
  *   memory_stats       — get memory health metrics
  *   memory_checkpoint  — save structured execution state (survives compaction)
  *   memory_restore     — restore state + targeted recall after compaction
@@ -53,7 +54,7 @@ import { RetractionEngine } from './engine/retraction.js';
 import { EvalEngine } from './engine/eval.js';
 import { ConsolidationEngine } from './engine/consolidation.js';
 import { ConsolidationScheduler } from './engine/consolidation-scheduler.js';
-import { evaluateSalience, computeNovelty } from './core/salience.js';
+import { evaluateSalience, computeNovelty, computeNoveltyWithMatch } from './core/salience.js';
 import type { ConsciousState } from './types/checkpoint.js';
 import type { SalienceEventType } from './core/salience.js';
 import type { TaskStatus, TaskPriority } from './types/engram.js';
@@ -70,7 +71,7 @@ const INCOGNITO = process.env.AWM_INCOGNITO === '1' || process.env.AWM_INCOGNITO
 
 if (INCOGNITO) {
   console.error('AWM: incognito mode — all memory tools disabled, nothing will be recorded');
-  const server = new McpServer({ name: 'agent-working-memory', version: '0.4.0' });
+  const server = new McpServer({ name: 'agent-working-memory', version: '0.5.4' });
   const transport = new StdioServerTransport();
   server.connect(transport).catch(err => {
     console.error('MCP server failed:', err);
@@ -82,7 +83,7 @@ if (INCOGNITO) {
 // --- Setup ---
 
 const DB_PATH = process.env.AWM_DB_PATH ?? 'memory.db';
-const AGENT_ID = process.env.AWM_AGENT_ID ?? 'claude-code';
+const AGENT_ID = process.env.AWM_AGENT_ID ?? process.env.WORKER_NAME ?? 'claude-code';
 const HOOK_PORT = parseInt(process.env.AWM_HOOK_PORT ?? '8401', 10);
 const HOOK_SECRET = process.env.AWM_HOOK_SECRET ?? null;
 
@@ -104,7 +105,7 @@ consolidationScheduler.start();
 
 const server = new McpServer({
   name: 'agent-working-memory',
-  version: '0.4.0',
+  version: '0.5.4',
 });
 
 // --- Tools ---
@@ -136,10 +137,45 @@ The concept should be a short label (3-8 words). The content should be the full 
       .describe('How deep is the causal understanding? 0=surface, 1=root cause'),
     resolution_effort: z.number().min(0).max(1).optional().default(0.3)
       .describe('How much effort to resolve? 0=trivial, 1=significant debugging'),
+    memory_class: z.enum(['canonical', 'working', 'ephemeral']).optional().default('working')
+      .describe('Memory class: canonical (source-of-truth, never stages), working (default), ephemeral (temporary, decays faster)'),
+    supersedes: z.string().optional()
+      .describe('ID of an older memory this one replaces. The old memory is down-ranked, not deleted.'),
   },
   async (params) => {
-    // Check novelty — is this new information or a duplicate?
-    const novelty = computeNovelty(store, AGENT_ID, params.concept, params.content);
+    // Check novelty with match info for reinforcement
+    const noveltyResult = computeNoveltyWithMatch(store, AGENT_ID, params.concept, params.content);
+    const novelty = noveltyResult.novelty;
+
+    // --- Reinforce-on-Duplicate check ---
+    // Tightened thresholds: require near-exact match (novelty < 0.3, BM25 > 0.85, 60% content overlap)
+    if (novelty < 0.3
+        && noveltyResult.matchScore > 0.85
+        && noveltyResult.matchedEngramId) {
+      const matchedEngram = store.getEngram(noveltyResult.matchedEngramId);
+      if (matchedEngram) {
+        const existingTokens = new Set(matchedEngram.content.toLowerCase().split(/\s+/).filter(w => w.length > 3));
+        const newTokens = new Set(params.content.toLowerCase().split(/\s+/).filter(w => w.length > 3));
+        let overlap = 0;
+        for (const t of newTokens) { if (existingTokens.has(t)) overlap++; }
+        const contentOverlap = newTokens.size > 0 ? overlap / newTokens.size : 0;
+
+        if (contentOverlap > 0.6) {
+          // True duplicate — reinforce existing and skip creation
+          store.touchEngram(noveltyResult.matchedEngramId);
+          try { store.updateAutoCheckpointWrite(AGENT_ID, noveltyResult.matchedEngramId); } catch { /* non-fatal */ }
+          log(AGENT_ID, 'write:reinforce', `"${params.concept}" → reinforced "${matchedEngram.concept}" (overlap=${contentOverlap.toFixed(2)})`);
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Reinforced existing memory "${matchedEngram.concept}" (overlap ${(contentOverlap * 100).toFixed(0)}%)`,
+            }],
+          };
+        }
+        // Partial match — continue to create new memory
+        log(AGENT_ID, 'write:partial-match', `"${params.concept}" partially matched "${matchedEngram.concept}" (overlap=${contentOverlap.toFixed(2)}), creating new memory`);
+      }
+    }
 
     const salience = evaluateSalience({
       content: params.content,
@@ -149,22 +185,14 @@ The concept should be a short label (3-8 words). The content should be the full 
       causalDepth: params.causal_depth,
       resolutionEffort: params.resolution_effort,
       novelty,
+      memoryClass: params.memory_class,
     });
 
-    if (salience.disposition === 'discard') {
-      log(AGENT_ID, 'write:discard', `"${params.concept}" salience=${salience.score.toFixed(2)} novelty=${novelty.toFixed(1)}`);
-      return {
-        content: [{
-          type: 'text' as const,
-          text: `Discarded (salience ${salience.score.toFixed(2)}, novelty ${novelty.toFixed(1)})`,
-        }],
-      };
-    }
+    // v0.5.4: No longer discard — store everything, use salience for ranking.
+    // Low-salience memories get low confidence so they rank below high-salience
+    // in retrieval, but remain available for recall when needed.
+    const isLowSalience = salience.disposition === 'discard';
 
-    // Confidence prior based on event type — decisions and root causes
-    // start higher than observations. This seeds variance so existing
-    // confidence-gated machinery (decay modulation, edge protection,
-    // feedback bonus, consolidation) starts doing useful work immediately.
     const CONFIDENCE_PRIORS: Record<string, number> = {
       decision: 0.65,
       friction: 0.60,
@@ -172,26 +200,40 @@ The concept should be a short label (3-8 words). The content should be the full 
       surprise: 0.55,
       observation: 0.45,
     };
-    const confidencePrior = salience.disposition === 'staging'
-      ? 0.40  // Staging promotions barely made it in
+    const confidencePrior = isLowSalience
+      ? 0.25
+      : salience.disposition === 'staging'
+      ? 0.40
       : CONFIDENCE_PRIORS[params.event_type ?? 'observation'] ?? 0.45;
 
     const engram = store.createEngram({
       agentId: AGENT_ID,
       concept: params.concept,
       content: params.content,
-      tags: params.tags,
+      tags: isLowSalience ? [...(params.tags ?? []), 'low-salience'] : params.tags,
       salience: salience.score,
       confidence: confidencePrior,
       salienceFeatures: salience.features,
       reasonCodes: salience.reasonCodes,
       ttl: salience.disposition === 'staging' ? DEFAULT_AGENT_CONFIG.stagingTtlMs : undefined,
+      memoryClass: params.memory_class,
+      supersedes: params.supersedes,
     });
 
     if (salience.disposition === 'staging') {
       store.updateStage(engram.id, 'staging');
     } else {
       connectionEngine.enqueue(engram.id);
+    }
+
+    // Handle supersession: mark old memory as superseded
+    if (params.supersedes) {
+      const oldEngram = store.getEngram(params.supersedes);
+      if (oldEngram) {
+        store.supersedeEngram(params.supersedes, engram.id);
+        // Create supersession association
+        store.upsertAssociation(engram.id, oldEngram.id, 0.8, 'causal', 0.9);
+      }
     }
 
     // Generate embedding asynchronously (don't block response)
@@ -202,7 +244,8 @@ The concept should be a short label (3-8 words). The content should be the full 
     // Auto-checkpoint: track write
     try { store.updateAutoCheckpointWrite(AGENT_ID, engram.id); } catch { /* non-fatal */ }
 
-    log(AGENT_ID, `write:${salience.disposition}`, `"${params.concept}" salience=${salience.score.toFixed(2)} novelty=${novelty.toFixed(1)} id=${engram.id}`);
+    const logDisposition = isLowSalience ? 'low-salience' : salience.disposition;
+    log(AGENT_ID, `write:${logDisposition}`, `"${params.concept}" salience=${salience.score.toFixed(2)} novelty=${novelty.toFixed(1)} id=${engram.id}`);
 
     return {
       content: [{
@@ -342,6 +385,50 @@ Use this when you discover a memory contains incorrect information.`,
       content: [{
         type: 'text' as const,
         text: parts.join(' '),
+      }],
+    };
+  }
+);
+
+server.tool(
+  'memory_supersede',
+  `Replace an outdated memory with a newer one. Unlike retraction (which marks memories as wrong), supersession marks the old memory as outdated but historically correct.
+
+Use this when:
+- A status or count has changed (e.g., "5 reviews done" → "7 reviews done")
+- Architecture or infrastructure evolved (e.g., "two-repo model" → "three-repo model")
+- A schedule or plan was updated
+
+The old memory stays in the database (searchable for history) but is heavily down-ranked in recall so the current version dominates.`,
+  {
+    old_engram_id: z.string().describe('ID of the outdated memory'),
+    new_engram_id: z.string().describe('ID of the replacement memory'),
+    reason: z.string().optional().describe('Why the old memory is outdated'),
+  },
+  async (params) => {
+    const oldEngram = store.getEngram(params.old_engram_id);
+    if (!oldEngram) {
+      return { content: [{ type: 'text' as const, text: `Old memory not found: ${params.old_engram_id}` }] };
+    }
+    const newEngram = store.getEngram(params.new_engram_id);
+    if (!newEngram) {
+      return { content: [{ type: 'text' as const, text: `New memory not found: ${params.new_engram_id}` }] };
+    }
+
+    store.supersedeEngram(params.old_engram_id, params.new_engram_id);
+
+    // Create supersession association (new → old)
+    store.upsertAssociation(params.new_engram_id, params.old_engram_id, 0.8, 'causal', 0.9);
+
+    // Reduce old memory's confidence (not to zero — it's historical, not wrong)
+    store.updateConfidence(params.old_engram_id, Math.max(0.2, oldEngram.confidence * 0.4));
+
+    log(AGENT_ID, 'supersede', `"${oldEngram.concept}" → "${newEngram.concept}"${params.reason ? ` (${params.reason})` : ''}`);
+
+    return {
+      content: [{
+        type: 'text' as const,
+        text: `Superseded: "${oldEngram.concept}" → "${newEngram.concept}"`,
       }],
     };
   }
@@ -505,7 +592,7 @@ Use this at the start of every session or after compaction to pick up where you 
         // No recent consolidation — graceful exit didn't happen, run full cycle
         fullConsolidationTriggered = true;
         try {
-          const result = consolidationEngine.consolidate(AGENT_ID);
+          const result = await consolidationEngine.consolidate(AGENT_ID);
           store.markConsolidation(AGENT_ID, false);
           log(AGENT_ID, 'consolidation', `full sleep cycle on restore (no graceful exit, idle ${Math.round(idleMs / 60_000)}min, last consolidation ${Math.round(sinceLastConsolidation / 60_000)}min ago) — ${result.edgesStrengthened} strengthened, ${result.memoriesForgotten} forgotten`);
         } catch { /* consolidation failure is non-fatal */ }
@@ -804,6 +891,8 @@ This captures what was accomplished so future sessions can recall it.`,
     summary: z.string().describe('What was accomplished? Include key outcomes, decisions, and any issues.'),
     tags: z.array(z.string()).optional().default([])
       .describe('Tags for the summary memory'),
+    supersedes: z.array(z.string()).optional().default([])
+      .describe('IDs of older memories this task summary replaces (marks them as superseded)'),
   },
   async (params) => {
     // 1. Write summary as a memory
@@ -816,12 +905,23 @@ This captures what was accomplished so future sessions can recall it.`,
       resolutionEffort: 0.5,
     });
 
+    // Determine the real task name for the summary engram
+    const checkpoint = store.getCheckpoint(AGENT_ID);
+    const rawTask = checkpoint?.executionState?.currentTask ?? 'Unknown task';
+    // Strip any "Completed: " prefixes to avoid cascading
+    const cleanedTask = rawTask.replace(/^(Completed: )+/, '');
+    // Don't use auto-checkpoint or already-completed tasks as real task names
+    const isNamedTask = !cleanedTask.startsWith('Auto-checkpoint') && cleanedTask !== 'Unknown task';
+    const completedTask = isNamedTask
+      ? cleanedTask
+      : params.summary.slice(0, 60).replace(/\n/g, ' ');
+
     const engram = store.createEngram({
       agentId: AGENT_ID,
-      concept: 'Task completed',
+      concept: completedTask.slice(0, 80),
       content: params.summary,
       tags: [...params.tags, 'task-summary'],
-      salience: Math.max(salience.score, 0.7), // Always high salience for task summaries
+      salience: isNamedTask ? Math.max(salience.score, 0.7) : salience.score, // Only floor salience for named tasks
       confidence: 0.65, // Task summaries are decision-grade (completed work)
       salienceFeatures: salience.features,
       reasonCodes: [...salience.reasonCodes, 'task-end'],
@@ -829,15 +929,24 @@ This captures what was accomplished so future sessions can recall it.`,
 
     connectionEngine.enqueue(engram.id);
 
+    // 2. Handle supersessions — mark old memories as outdated
+    let supersededCount = 0;
+    for (const oldId of params.supersedes) {
+      const oldEngram = store.getEngram(oldId);
+      if (oldEngram) {
+        store.supersedeEngram(oldId, engram.id);
+        store.upsertAssociation(engram.id, oldId, 0.8, 'causal', 0.9);
+        store.updateConfidence(oldId, Math.max(0.2, oldEngram.confidence * 0.4));
+        supersededCount++;
+      }
+    }
+
     // Generate embedding asynchronously
     embed(`Task completed: ${params.summary}`).then(vec => {
       store.updateEmbedding(engram.id, vec);
     }).catch(() => {});
 
     // 2. Update checkpoint to reflect completion
-    const checkpoint = store.getCheckpoint(AGENT_ID);
-    const completedTask = checkpoint?.executionState?.currentTask ?? 'Unknown task';
-
     store.saveCheckpoint(AGENT_ID, {
       currentTask: `Completed: ${completedTask}`,
       decisions: checkpoint?.executionState?.decisions ?? [],
@@ -849,12 +958,13 @@ This captures what was accomplished so future sessions can recall it.`,
     });
 
     store.updateAutoCheckpointWrite(AGENT_ID, engram.id);
-    log(AGENT_ID, 'task:end', `"${completedTask}" summary=${engram.id} salience=${salience.score.toFixed(2)}`);
+    log(AGENT_ID, 'task:end', `"${completedTask}" summary=${engram.id} salience=${salience.score.toFixed(2)} superseded=${supersededCount}`);
 
+    const supersededNote = supersededCount > 0 ? ` (${supersededCount} old memories superseded)` : '';
     return {
       content: [{
         type: 'text' as const,
-        text: `Completed: "${completedTask}" [${salience.score.toFixed(2)}]`,
+        text: `Completed: "${completedTask}" [${salience.score.toFixed(2)}]${supersededNote}`,
       }],
     };
   }
@@ -872,9 +982,9 @@ async function main() {
     agentId: AGENT_ID,
     secret: HOOK_SECRET,
     port: HOOK_PORT,
-    onConsolidate: (agentId, reason) => {
+    onConsolidate: async (agentId, reason) => {
       console.error(`[mcp] consolidation triggered: ${reason}`);
-      const result = consolidationEngine.consolidate(agentId);
+      const result = await consolidationEngine.consolidate(agentId);
       store.markConsolidation(agentId, false);
       console.error(`[mcp] consolidation done: ${result.edgesStrengthened} strengthened, ${result.memoriesForgotten} forgotten`);
     },

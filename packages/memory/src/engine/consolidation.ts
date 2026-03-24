@@ -25,8 +25,12 @@ import { strengthenAssociation, decayAssociation } from '../core/hebbian.js';
 import type { Engram } from '../types/index.js';
 import type { EngramStore } from '../storage/sqlite.js';
 
-/** Cosine similarity threshold for considering two memories related */
+/** Cosine similarity for initial candidate detection (single-link entry gate) */
 const SIMILARITY_THRESHOLD = 0.65;
+
+/** Minimum pairwise cosine for cluster diameter enforcement.
+ * Prevents chaining: a candidate must be this similar to ALL cluster members. */
+const MIN_PAIRWISE_COS = 0.50;
 
 /** Lower threshold for cross-cluster bridge edges */
 const BRIDGE_THRESHOLD = 0.25;
@@ -51,6 +55,12 @@ const HOMEOSTASIS_TARGET = 10.0;
 
 /** Grace period before forgetting curve starts (days) */
 const FORGET_GRACE_DAYS = 7;
+
+/** Consolidation cycles before 0-access memories get archived */
+const FORGET_CYCLE_THRESHOLD = 5;
+
+/** Percentile of edge count distribution used for forgetting protection (0-1) */
+const EDGE_PROTECTION_PERCENTILE = 0.25;
 
 /** Age at which never-retrieved memories get archived (days) */
 const FORGET_ARCHIVE_DAYS = 30;
@@ -106,7 +116,7 @@ export class ConsolidationEngine {
    * Phase 6.7: Confidence drift — adjust confidence based on structural signals
    * Phase 7: Sweep — check staging buffer for resonance
    */
-  consolidate(agentId: string): ConsolidationResult {
+  async consolidate(agentId: string): Promise<ConsolidationResult> {
     const result: ConsolidationResult = {
       clustersFound: 0,
       edgesStrengthened: 0,
@@ -125,9 +135,22 @@ export class ConsolidationEngine {
     };
 
     // --- Phase 1: Replay ---
-    // Get all active engrams with embeddings
-    const engrams = this.store.getEngramsByAgent(agentId, 'active')
-      .filter(e => e.embedding && e.embedding.length > 0);
+    // Get all active engrams, backfill missing embeddings
+    const allActive = this.store.getEngramsByAgent(agentId, 'active');
+    const needsEmbedding = allActive.filter(e => !e.embedding || e.embedding.length === 0);
+    if (needsEmbedding.length > 0) {
+      try {
+        const { embed } = await import('../core/embeddings.js');
+        for (const e of needsEmbedding) {
+          try {
+            const vec = await embed(`${e.concept} ${e.content}`);
+            this.store.updateEmbedding(e.id, vec);
+            e.embedding = vec;
+          } catch { /* non-fatal */ }
+        }
+      } catch { /* embeddings module unavailable */ }
+    }
+    const engrams = allActive.filter(e => e.embedding && e.embedding.length > 0);
 
     result.engramsProcessed = engrams.length;
     if (engrams.length < 2) return result;
@@ -172,30 +195,32 @@ export class ConsolidationEngine {
       }
     }
 
-    // --- Phase 3: Cross-cluster bridge edges ---
-    // For each pair of clusters, compute centroid similarity. If moderate
-    // similarity exists but no direct edge, create a low-weight bridge.
-    // This is what enables cross-topic retrieval to improve over time.
+    // --- Phase 3: Direct cross-cluster bridging ---
+    // Find the closest pair of memories between each cluster pair and bridge them.
     if (clusters.length >= 2) {
+      const MIN_BRIDGE_SIM = 0.15;
       let bridges = 0;
-      const centroids = clusters.map(cluster => this.computeCentroid(cluster));
-
       for (let i = 0; i < clusters.length && bridges < MAX_BRIDGE_EDGES_PER_CYCLE; i++) {
         for (let j = i + 1; j < clusters.length && bridges < MAX_BRIDGE_EDGES_PER_CYCLE; j++) {
-          const sim = cosineSimilarity(centroids[i], centroids[j]);
-          if (sim < BRIDGE_THRESHOLD || sim >= SIMILARITY_THRESHOLD) continue;
-
-          // Find the best representative from each cluster (highest accessCount)
-          const repA = clusters[i].reduce((best, e) => e.accessCount > best.accessCount ? e : best);
-          const repB = clusters[j].reduce((best, e) => e.accessCount > best.accessCount ? e : best);
-
-          const existing = this.store.getAssociation(repA.id, repB.id);
-          if (!existing) {
-            // Bridge weight proportional to inter-cluster similarity
-            const bridgeWeight = 0.15 + 0.15 * ((sim - BRIDGE_THRESHOLD) / (SIMILARITY_THRESHOLD - BRIDGE_THRESHOLD));
-            this.store.upsertAssociation(repA.id, repB.id, bridgeWeight, 'bridge');
-            bridges++;
-            result.bridgesCreated++;
+          let bestSim = -1;
+          let bestA: Engram | null = null;
+          let bestB: Engram | null = null;
+          for (const a of clusters[i]) {
+            if (!a.embedding) continue;
+            for (const b of clusters[j]) {
+              if (!b.embedding) continue;
+              const s = cosineSimilarity(a.embedding, b.embedding);
+              if (s > bestSim) { bestSim = s; bestA = a; bestB = b; }
+            }
+          }
+          if (bestA && bestB && bestSim > MIN_BRIDGE_SIM) {
+            const existing = this.store.getAssociation(bestA.id, bestB.id);
+            if (!existing) {
+              this.store.upsertAssociation(bestA.id, bestB.id, bestSim, 'bridge');
+              this.store.upsertAssociation(bestB.id, bestA.id, bestSim, 'bridge');
+              bridges++;
+              result.bridgesCreated++;
+            }
           }
         }
       }
@@ -270,20 +295,38 @@ export class ConsolidationEngine {
     //
     // Key insight: outdated memories still have value as historical context.
     // "We used to use X" helps explain why we now use Y.
+    // Compute edge count percentile for relative protection threshold.
+    // With avg 12 edges/node, an absolute threshold of 3 protects everything.
+    // Use 25th percentile so "weakly connected" is relative to actual graph density.
+    const edgeCounts = engrams.map(e => this.store.countAssociationsFor(e.id));
+    edgeCounts.sort((a, b) => a - b);
+    const percentileIdx = Math.floor(edgeCounts.length * EDGE_PROTECTION_PERCENTILE);
+    const baseEdgeThreshold = edgeCounts.length > 0 ? edgeCounts[percentileIdx] : 3;
+
+    // Get consolidation cycle count for cycle-based archiving
+    const cycleCount = this.store.getConsolidationCycleCount(agentId);
+
     for (const engram of engrams) {
       const ageDays = (Date.now() - engram.createdAt.getTime()) / (1000 * 60 * 60 * 24);
       if (ageDays < FORGET_GRACE_DAYS) continue; // Grace period — too new to judge
 
       const edgeCount = this.store.countAssociationsFor(engram.id);
 
-      // Connections keep memories alive — well-integrated knowledge persists.
-      // High-confidence memories (feedback-confirmed) need fewer edges to survive.
-      // Models a senior dev who remembers standalone important facts.
-      // Default: 3 edges. At conf 0.7: 2 edges. At conf 0.8+: 1 edge.
-      const edgeProtectionThreshold = engram.confidence > 0.7
-        ? Math.max(1, Math.round(3 - 4 * (engram.confidence - 0.5)))
-        : 3;
+      // Use relative threshold (percentile-based) instead of absolute.
+      // High-confidence memories need fewer edges to survive.
+      const confReduction = engram.confidence > 0.7
+        ? Math.min(0.6, (engram.confidence - 0.7) * 2)
+        : 0;
+      const edgeProtectionThreshold = Math.max(1, Math.round(baseEdgeThreshold * (1 - confReduction)));
       if (edgeCount > edgeProtectionThreshold) continue;
+
+      // Cycle-based archive: 0-access memories archived after N cycles
+      // regardless of age. Handles small pools where time thresholds are too generous.
+      if (engram.accessCount === 0 && cycleCount >= FORGET_CYCLE_THRESHOLD) {
+        this.store.updateStage(engram.id, 'archived');
+        result.memoriesArchived++;
+        continue;
+      }
 
       // Compute effective forgetting threshold based on memory strength signals.
       // Rehearsal (access + feedback) extends protection but NEVER makes immortal.
@@ -450,34 +493,66 @@ export class ConsolidationEngine {
    * Greedy agglomerative — each memory belongs to at most one cluster.
    * Clusters of size 2+ are returned (pairs count — they link).
    */
+  /**
+   * Diameter-enforced greedy clustering.
+   * Single-link entry (cosine ≥ SIMILARITY_THRESHOLD to any member)
+   * + complete-link diameter (cosine ≥ MIN_PAIRWISE_COS to ALL members).
+   * Prevents chaining where physics→biophysics→cooking = 1 cluster.
+   */
   private findClusters(engrams: Engram[]): Engram[][] {
-    const assigned = new Set<string>();
+    const n = engrams.length;
+    if (n < 2) return [];
+
+    // Precompute pairwise cosine matrix
+    const sim: number[][] = Array.from({ length: n }, () => Array(n).fill(0));
+    for (let i = 0; i < n; i++) {
+      sim[i][i] = 1;
+      for (let j = i + 1; j < n; j++) {
+        if (!engrams[i].embedding || !engrams[j].embedding) continue;
+        const c = cosineSimilarity(engrams[i].embedding!, engrams[j].embedding!);
+        sim[i][j] = c;
+        sim[j][i] = c;
+      }
+    }
+
+    const unassigned = new Set<number>(Array.from({ length: n }, (_, i) => i));
     const clusters: Engram[][] = [];
 
-    // Seed clusters from most-accessed memories (strongest traces)
-    const sorted = [...engrams].sort((a, b) => b.accessCount - a.accessCount);
+    const sortedIdxs = Array.from({ length: n }, (_, i) => i)
+      .sort((a, b) => engrams[b].accessCount - engrams[a].accessCount);
 
-    for (const seed of sorted) {
-      if (assigned.has(seed.id)) continue;
+    for (const seedIdx of sortedIdxs) {
+      if (!unassigned.has(seedIdx)) continue;
+      unassigned.delete(seedIdx);
 
-      const cluster: Engram[] = [seed];
-      assigned.add(seed.id);
+      const clusterIdxs: number[] = [seedIdx];
+      let added = true;
 
-      for (const candidate of sorted) {
-        if (assigned.has(candidate.id)) continue;
-        if (!seed.embedding || !candidate.embedding) continue;
+      while (added) {
+        added = false;
+        for (const candIdx of Array.from(unassigned)) {
+          let links = false;
+          for (const m of clusterIdxs) {
+            if (sim[candIdx][m] >= SIMILARITY_THRESHOLD) { links = true; break; }
+          }
+          if (!links) continue;
 
-        const sim = cosineSimilarity(seed.embedding, candidate.embedding);
-        if (sim >= SIMILARITY_THRESHOLD) {
-          cluster.push(candidate);
-          assigned.add(candidate.id);
+          let passesAll = true;
+          for (const m of clusterIdxs) {
+            if (sim[candIdx][m] < MIN_PAIRWISE_COS) { passesAll = false; break; }
+          }
+          if (!passesAll) continue;
+
+          clusterIdxs.push(candIdx);
+          unassigned.delete(candIdx);
+          added = true;
         }
       }
 
-      if (cluster.length >= 2) {
-        clusters.push(cluster);
+      if (clusterIdxs.length >= 2) {
+        clusters.push(clusterIdxs.map(i => engrams[i]));
       } else {
-        for (const e of cluster) assigned.delete(e.id);
+        unassigned.add(seedIdx);
       }
     }
 

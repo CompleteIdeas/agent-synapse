@@ -40,6 +40,13 @@ export interface Engram {
   // Episode grouping
   episodeId: string | null;
 
+  // Memory class
+  memoryClass: MemoryClass;
+
+  // Supersession — "this replaces that" (not retraction — original wasn't wrong, just outdated)
+  supersededBy: string | null;   // ID of the engram that replaced this one
+  supersedes: string | null;     // ID of the engram this one replaces
+
   // Task management (null = not a task)
   taskStatus: TaskStatus | null;
   taskPriority: TaskPriority | null;
@@ -50,6 +57,18 @@ export type EngramStage = 'staging' | 'active' | 'consolidated' | 'archived';
 
 export type TaskStatus = 'open' | 'in_progress' | 'blocked' | 'done';
 export type TaskPriority = 'urgent' | 'high' | 'medium' | 'low';
+
+/**
+ * Memory class — controls salience floor and recall priority.
+ *
+ * canonical:  Source-of-truth facts (current state, decisions, architecture).
+ *             Never goes to staging. Minimum salience 0.7.
+ * working:    Normal observations, learnings, context (default).
+ *             Standard salience rules apply.
+ * ephemeral:  Temporary context (debugging traces, session-specific notes).
+ *             Stronger time decay, lower recall priority.
+ */
+export type MemoryClass = 'canonical' | 'working' | 'ephemeral';
 
 /**
  * Raw feature scores that produced the salience score.
@@ -75,6 +94,8 @@ export interface EngramCreate {
   reasonCodes?: string[];
   episodeId?: string;
   ttl?: number;
+  memoryClass?: MemoryClass;
+  supersedes?: string;
   taskStatus?: TaskStatus;
   taskPriority?: TaskPriority;
   blockedBy?: string;

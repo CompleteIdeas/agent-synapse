@@ -10,7 +10,7 @@
  *   - Deterministic heuristics first, LLM augmentation optional
  */
 
-import type { SalienceFeatures } from '../types/index.js';
+import type { SalienceFeatures, MemoryClass } from '../types/index.js';
 import type { EngramStore } from '../storage/sqlite.js';
 
 export type SalienceEventType = 'decision' | 'friction' | 'surprise' | 'causal' | 'observation';
@@ -24,6 +24,8 @@ export interface SalienceInput {
   resolutionEffort?: number;
   /** 0 = exact duplicate exists, 1 = completely novel. Computed by caller via BM25 similarity check. */
   novelty?: number;
+  /** Memory class — canonical memories get salience floor of 0.7 and never stage. */
+  memoryClass?: MemoryClass;
 }
 
 export interface SalienceResult {
@@ -92,10 +94,25 @@ export function evaluateSalience(
     case 'observation': break;
   }
 
-  const score = Math.min(surpriseScore + decisionScore + causalScore + effortScore + noveltyScore + typeBonus, 1.0);
+  let score = Math.min(surpriseScore + decisionScore + causalScore + effortScore + noveltyScore + typeBonus, 1.0);
+
+  // Memory class overrides
+  const memoryClass = input.memoryClass ?? 'working';
+
+  if (memoryClass === 'canonical') {
+    // Canonical memories: salience floor of 0.7, never go to staging
+    score = Math.max(score, 0.7);
+    reasonCodes.push('class:canonical');
+  } else if (memoryClass === 'ephemeral') {
+    reasonCodes.push('class:ephemeral');
+  }
 
   let disposition: 'active' | 'staging' | 'discard';
-  if (score >= activeThreshold) {
+  if (memoryClass === 'canonical') {
+    // Canonical always goes active — they represent current truth
+    disposition = 'active';
+    reasonCodes.push('disposition:active');
+  } else if (score >= activeThreshold) {
     disposition = 'active';
     reasonCodes.push('disposition:active');
   } else if (score >= stagingThreshold) {
@@ -126,20 +143,77 @@ export function computeNovelty(store: EngramStore, agentId: string, concept: str
     const conceptStr = typeof concept === 'string' ? concept : '';
     const searchText = `${conceptStr} ${contentStr.slice(0, 100)}`;
 
-    const results = store.searchBM25WithRank(agentId, searchText, 3);
+    const results = store.searchBM25WithRank(agentId, searchText, 5);
     if (results.length === 0) return 1.0; // Nothing similar — fully novel
 
     // searchBM25WithRank normalizes scores to 0..1 via |rank|/(1+|rank|).
     // Higher score = stronger match = less novel.
     const topScore = results[0].bm25Score;
 
-    if (topScore > 0.95) return 0.1;  // Near-duplicate
-    if (topScore > 0.85) return 0.3;  // High overlap
-    if (topScore > 0.70) return 0.5;  // Moderate overlap
-    if (topScore > 0.50) return 0.7;  // Some overlap
-    return 0.9;                        // Minimal overlap — mostly novel
+    // Penalize exact concept string duplicates — if any result has the same concept,
+    // heavily reduce novelty to prevent hub toxicity from repeated task_end summaries
+    const conceptLower = conceptStr.toLowerCase().trim();
+    const exactConceptMatch = results.some(r => r.engram?.concept?.toLowerCase().trim() === conceptLower);
+    const conceptPenalty = exactConceptMatch ? 0.4 : 0;
+
+    // Continuous novelty: inversely proportional to BM25 similarity
+    // Maps topScore (0..1) → novelty (0.1..0.95) using a smooth curve
+    // Floor at 0.1 (never zero — even duplicates might have new context)
+    // Ceiling at 0.95 (never 1.0 — always a tiny chance of overlap)
+    return Math.max(0.1, Math.min(0.95, 1.0 - topScore - conceptPenalty));
   } catch {
     // If BM25 search fails (e.g., FTS not ready), assume novel
     return 0.8;
+  }
+}
+
+/**
+ * Result from novelty computation with match info for reinforcement.
+ */
+export interface NoveltyResult {
+  novelty: number;
+  matchedEngramId: string | null;
+  matchScore: number;
+}
+
+/**
+ * Compute novelty score AND return the best matching engram (for reinforcement-on-duplicate).
+ * Uses BM25 (synchronous, fast) to find the closest existing memory.
+ * Optionally checks workspace-scoped memories too (cross-agent dedup).
+ */
+export function computeNoveltyWithMatch(
+  store: EngramStore, agentId: string, concept: string, content: string,
+  workspace?: string | null
+): NoveltyResult {
+  try {
+    const contentStr = typeof content === 'string' ? content : '';
+    const conceptStr = typeof concept === 'string' ? concept : '';
+    const searchText = `${conceptStr} ${contentStr.slice(0, 100)}`;
+
+    // Agent-scoped search (limit:3 to avoid single shallow match suppressing novelty)
+    const results = store.searchBM25WithRank(agentId, searchText, 3);
+
+    // Workspace search — only if the store supports it (v0.5.4+)
+    let wsResults: { engram: { id: string }; bm25Score: number }[] = [];
+    if (workspace && typeof (store as any).searchBM25WithRankWorkspace === 'function') {
+      wsResults = (store as any).searchBM25WithRankWorkspace(agentId, searchText, 3, workspace);
+    }
+
+    const allResults = [...results, ...wsResults];
+    if (allResults.length === 0) return { novelty: 1.0, matchedEngramId: null, matchScore: 0 };
+
+    allResults.sort((a, b) => b.bm25Score - a.bm25Score);
+    const top = allResults[0];
+    const topScore = top.bm25Score;
+
+    // Concept penalty for exact duplicates
+    const conceptLower = conceptStr.toLowerCase().trim();
+    const exactMatch = allResults.some(r => (r.engram as any)?.concept?.toLowerCase().trim() === conceptLower);
+    const conceptPenalty = exactMatch ? 0.4 : 0;
+
+    const novelty = Math.max(0.1, Math.min(0.95, 1.0 - topScore - conceptPenalty));
+    return { novelty, matchedEngramId: top.engram.id, matchScore: topScore };
+  } catch {
+    return { novelty: 0.8, matchedEngramId: null, matchScore: 0 };
   }
 }

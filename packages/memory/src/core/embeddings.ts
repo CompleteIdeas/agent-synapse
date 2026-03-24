@@ -8,12 +8,9 @@
  * Model is downloaded once on first use and cached locally.
  *
  * Singleton pattern — call getEmbedder() to get the shared instance.
- *
- * @huggingface/transformers is an optional dependency. If not installed,
- * embed() returns empty arrays and a warning is logged once.
  */
 
-type FeatureExtractionPipeline = any;
+import { pipeline, type FeatureExtractionPipeline } from '@huggingface/transformers';
 
 const MODEL_ID = process.env.AWM_EMBED_MODEL ?? 'Xenova/all-MiniLM-L6-v2';
 const DIMENSIONS = parseInt(process.env.AWM_EMBED_DIMS ?? '384', 10);
@@ -21,34 +18,22 @@ const POOLING = (process.env.AWM_EMBED_POOLING ?? 'mean') as 'cls' | 'mean';
 
 let instance: FeatureExtractionPipeline | null = null;
 let initPromise: Promise<FeatureExtractionPipeline> | null = null;
-let warned = false;
 
 /**
  * Get or initialize the embedding pipeline (singleton).
  * First call downloads the model (~22MB), subsequent calls are instant.
- * Returns null if @huggingface/transformers is not installed.
  */
-export async function getEmbedder(): Promise<FeatureExtractionPipeline | null> {
+export async function getEmbedder(): Promise<FeatureExtractionPipeline> {
   if (instance) return instance;
   if (initPromise) return initPromise;
 
-  initPromise = (async () => {
-    try {
-      const { pipeline } = await import('@huggingface/transformers');
-      const pipe = await pipeline('feature-extraction', MODEL_ID, {
-        dtype: 'fp32',
-      });
-      instance = pipe;
-      console.log(`Embedding model loaded: ${MODEL_ID} (${DIMENSIONS}d)`);
-      return pipe;
-    } catch {
-      if (!warned) {
-        console.warn('Embeddings disabled: @huggingface/transformers not installed. Memory will use BM25 text search only.');
-        warned = true;
-      }
-      return null;
-    }
-  })();
+  initPromise = pipeline('feature-extraction', MODEL_ID, {
+    dtype: 'fp32',
+  }).then(pipe => {
+    instance = pipe;
+    console.log(`Embedding model loaded: ${MODEL_ID} (${DIMENSIONS}d)`);
+    return pipe;
+  });
 
   return initPromise;
 }
@@ -56,11 +41,9 @@ export async function getEmbedder(): Promise<FeatureExtractionPipeline | null> {
 /**
  * Generate an embedding vector for a text string.
  * Returns a normalized float32 array of length DIMENSIONS.
- * Returns empty array if embeddings are unavailable.
  */
 export async function embed(text: string): Promise<number[]> {
   const embedder = await getEmbedder();
-  if (!embedder) return [];
   const result = await embedder(text, { pooling: POOLING, normalize: true });
   // result is a Tensor — extract the data
   return Array.from(result.data as Float32Array).slice(0, DIMENSIONS);
@@ -69,12 +52,10 @@ export async function embed(text: string): Promise<number[]> {
 /**
  * Generate embeddings for multiple texts in a batch.
  * More efficient than calling embed() in a loop.
- * Returns empty arrays if embeddings are unavailable.
  */
 export async function embedBatch(texts: string[]): Promise<number[][]> {
   if (texts.length === 0) return [];
   const embedder = await getEmbedder();
-  if (!embedder) return texts.map(() => []);
   const result = await embedder(texts, { pooling: POOLING, normalize: true });
   const data = result.data as Float32Array;
 

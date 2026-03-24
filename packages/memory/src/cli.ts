@@ -267,13 +267,25 @@ You have persistent memory via the agent-working-memory MCP server.
       }],
     }];
 
+    // Build hook command with multi-port fallback for separate memory pools.
+    // When users have work (port 8401) and personal (port 8402) pools via
+    // per-folder .mcp.json, the hook needs to try both ports since the global
+    // settings.json can't know which pool is active in the current session.
+    const altPort = hookPort === '8401' ? '8402' : '8401';
+    const hookUrlAlt = `http://127.0.0.1:${altPort}/hooks/checkpoint`;
+    const buildHookCmd = (event: string, maxTime: number) => {
+      const primary = `curl -sf -X POST ${hookUrl} -H "Content-Type: application/json" -H "Authorization: Bearer ${hookSecret}" -d "{\\"hook_event_name\\":\\"${event}\\"}" --max-time ${maxTime}`;
+      const fallback = `curl -sf -X POST ${hookUrlAlt} -H "Content-Type: application/json" -H "Authorization: Bearer ${hookSecret}" -d "{\\"hook_event_name\\":\\"${event}\\"}" --max-time ${maxTime}`;
+      return `${primary} || ${fallback}`;
+    };
+
     // PreCompact — auto-checkpoint before context compaction
     settings.hooks.PreCompact = [{
       matcher: '',
       hooks: [{
         type: 'command',
-        command: `curl -sf -X POST ${hookUrl} -H "Content-Type: application/json" -H "Authorization: Bearer ${hookSecret}" -d "{\\"hook_event_name\\":\\"PreCompact\\"}" --max-time 2`,
-        timeout: 3,
+        command: buildHookCmd('PreCompact', 5),
+        timeout: 10,
       }],
     }];
 
@@ -282,8 +294,8 @@ You have persistent memory via the agent-working-memory MCP server.
       matcher: '',
       hooks: [{
         type: 'command',
-        command: `curl -sf -X POST ${hookUrl} -H "Content-Type: application/json" -H "Authorization: Bearer ${hookSecret}" -d "{\\"hook_event_name\\":\\"SessionEnd\\"}" --max-time 2`,
-        timeout: 3,
+        command: buildHookCmd('SessionEnd', 2),
+        timeout: 5,
       }],
     }];
 

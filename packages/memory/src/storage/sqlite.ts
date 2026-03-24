@@ -12,7 +12,7 @@ import { randomUUID } from 'node:crypto';
 import type {
   Engram, EngramCreate, EngramStage, Association, AssociationType,
   SearchQuery, SalienceFeatures, ActivationEvent, StagingEvent,
-  RetrievalFeedbackEvent, Episode, TaskStatus, TaskPriority,
+  RetrievalFeedbackEvent, Episode, TaskStatus, TaskPriority, MemoryClass,
   ConsciousState, AutoCheckpoint, CheckpointRow,
 } from '../types/index.js';
 
@@ -172,6 +172,17 @@ export class EngramStore {
       this.db.exec('CREATE INDEX IF NOT EXISTS idx_engrams_task ON engrams(agent_id, task_status)');
     }
 
+    // Migration: add memory_class and supersession columns if missing
+    try {
+      this.db.prepare('SELECT memory_class FROM engrams LIMIT 0').get();
+    } catch {
+      this.db.exec(`
+        ALTER TABLE engrams ADD COLUMN memory_class TEXT NOT NULL DEFAULT 'working';
+        ALTER TABLE engrams ADD COLUMN superseded_by TEXT;
+        ALTER TABLE engrams ADD COLUMN supersedes TEXT;
+      `);
+    }
+
     // Migration: add conscious_state table for checkpointing
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS conscious_state (
@@ -186,9 +197,15 @@ export class EngramStore {
         checkpoint_at TEXT,
         last_consolidation_at TEXT,
         last_mini_consolidation_at TEXT,
+        consolidation_cycle_count INTEGER NOT NULL DEFAULT 0,
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       )
     `);
+
+    // Migration: add consolidation_cycle_count if missing (existing DBs)
+    try {
+      this.db.exec(`ALTER TABLE conscious_state ADD COLUMN consolidation_cycle_count INTEGER NOT NULL DEFAULT 0`);
+    } catch { /* column already exists */ }
   }
 
   // --- Engram CRUD ---
@@ -203,8 +220,8 @@ export class EngramStore {
     this.db.prepare(`
       INSERT INTO engrams (id, agent_id, concept, content, embedding, confidence, salience,
         access_count, last_accessed, created_at, salience_features, reason_codes, stage, tags, episode_id,
-        ttl, task_status, task_priority, blocked_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
+        ttl, memory_class, supersedes, task_status, task_priority, blocked_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, input.agentId, input.concept, input.content, embeddingBlob,
       input.confidence ?? 0.5,
@@ -215,6 +232,8 @@ export class EngramStore {
       JSON.stringify(input.tags ?? []),
       input.episodeId ?? null,
       input.ttl ?? null,
+      input.memoryClass ?? 'working',
+      input.supersedes ?? null,
       input.taskStatus ?? null,
       input.taskPriority ?? null,
       input.blockedBy ?? null,
@@ -455,6 +474,29 @@ export class EngramStore {
     return row ? this.rowToEngram(row) : null;
   }
 
+  // --- Supersession ---
+
+  /**
+   * Mark an engram as superseded by another.
+   * The old memory stays in the DB (historical) but gets down-ranked in recall.
+   */
+  supersedeEngram(oldId: string, newId: string): void {
+    this.db.prepare('UPDATE engrams SET superseded_by = ? WHERE id = ?').run(newId, oldId);
+    this.db.prepare('UPDATE engrams SET supersedes = ? WHERE id = ?').run(oldId, newId);
+  }
+
+  /**
+   * Check if an engram has been superseded.
+   */
+  isSuperseded(id: string): boolean {
+    const row = this.db.prepare('SELECT superseded_by FROM engrams WHERE id = ?').get(id) as any;
+    return row?.superseded_by != null;
+  }
+
+  updateMemoryClass(id: string, memoryClass: MemoryClass): void {
+    this.db.prepare('UPDATE engrams SET memory_class = ? WHERE id = ?').run(memoryClass, id);
+  }
+
   // --- Associations ---
 
   upsertAssociation(
@@ -674,6 +716,9 @@ export class EngramStore {
       retractedAt: row.retracted_at ? new Date(row.retracted_at) : null,
       tags: JSON.parse(row.tags),
       episodeId: row.episode_id ?? null,
+      memoryClass: (row.memory_class ?? 'working') as MemoryClass,
+      supersededBy: row.superseded_by ?? null,
+      supersedes: row.supersedes ?? null,
       taskStatus: row.task_status ?? null,
       taskPriority: row.task_priority ?? null,
       blockedBy: row.blocked_by ?? null,
@@ -887,6 +932,7 @@ export class EngramStore {
           last_mini_consolidation_at = ?,
           write_count_since_consolidation = 0,
           recall_count_since_consolidation = 0,
+          consolidation_cycle_count = consolidation_cycle_count + 1,
           updated_at = ?
         WHERE agent_id = ?
       `).run(now, now, now, agentId);
@@ -902,6 +948,13 @@ export class EngramStore {
       recallCount: row.recall_count_since_consolidation,
       lastConsolidationAt: row.last_consolidation_at ? new Date(row.last_consolidation_at) : null,
     }));
+  }
+
+  getConsolidationCycleCount(agentId: string): number {
+    const row = this.db.prepare(
+      'SELECT consolidation_cycle_count FROM conscious_state WHERE agent_id = ?',
+    ).get(agentId) as { consolidation_cycle_count: number } | undefined;
+    return row?.consolidation_cycle_count ?? 0;
   }
 
   close(): void {

@@ -10,43 +10,30 @@
  *   "What is Caroline's identity? Caroline personal gender transgender self"
  *
  * Singleton pattern — call getExpander() to get the shared instance.
- *
- * @huggingface/transformers is an optional dependency. If not installed,
- * expandQuery() returns the original query unchanged.
  */
+
+import { pipeline, type Text2TextGenerationPipeline } from '@huggingface/transformers';
 
 const MODEL_ID = 'Xenova/flan-t5-small';
 
-let instance: any = null;
-let initPromise: Promise<any> | null = null;
-let warned = false;
+let instance: Text2TextGenerationPipeline | null = null;
+let initPromise: Promise<Text2TextGenerationPipeline> | null = null;
 
 /**
  * Get or initialize the text generation pipeline (singleton).
  * First call downloads the model (~80MB), subsequent calls are instant.
- * Returns null if @huggingface/transformers is not installed.
  */
-export async function getExpander(): Promise<any> {
+export async function getExpander(): Promise<Text2TextGenerationPipeline> {
   if (instance) return instance;
   if (initPromise) return initPromise;
 
-  initPromise = (async () => {
-    try {
-      const { pipeline } = await import('@huggingface/transformers');
-      const pipe = await pipeline('text2text-generation', MODEL_ID, {
-        dtype: 'fp32',
-      });
-      instance = pipe;
-      console.log(`Query expander loaded: ${MODEL_ID}`);
-      return pipe;
-    } catch {
-      if (!warned) {
-        console.warn('Query expander disabled: @huggingface/transformers not installed.');
-        warned = true;
-      }
-      return null;
-    }
-  })();
+  initPromise = pipeline('text2text-generation', MODEL_ID, {
+    dtype: 'fp32',
+  }).then(pipe => {
+    instance = pipe as Text2TextGenerationPipeline;
+    console.log(`Query expander loaded: ${MODEL_ID}`);
+    return instance;
+  });
 
   return initPromise;
 }
@@ -54,12 +41,11 @@ export async function getExpander(): Promise<any> {
 /**
  * Expand a query with related terms and synonyms.
  * Returns the original query + generated expansion terms.
- * Falls back to the original query on any error or if expander is unavailable.
+ * Falls back to the original query on any error.
  */
 export async function expandQuery(originalQuery: string): Promise<string> {
   try {
     const expander = await getExpander();
-    if (!expander) return originalQuery;
     const prompt = `Expand this search query with synonyms and related terms. Only output the additional terms, not the original query. Query: ${originalQuery}. Additional terms:`;
 
     const result = await expander(prompt, {

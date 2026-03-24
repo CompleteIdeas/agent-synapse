@@ -12,39 +12,32 @@
  * pipeline, which doesn't support text_pair and returns identical scores).
  *
  * Singleton pattern — call getReranker() to get the shared instance.
- *
- * @huggingface/transformers is an optional dependency. If not installed,
- * rerank() returns passages in original order with score 0.
  */
+
+import {
+  AutoTokenizer,
+  AutoModelForSequenceClassification,
+  type PreTrainedTokenizer,
+  type PreTrainedModel,
+} from '@huggingface/transformers';
 
 const DEFAULT_MODEL = 'Xenova/ms-marco-MiniLM-L-6-v2';
 const MODEL_ID = process.env.AWM_RERANKER_MODEL || DEFAULT_MODEL;
 
-let tokenizer: any = null;
-let model: any = null;
-let initPromise: Promise<boolean> | null = null;
-let warned = false;
+let tokenizer: PreTrainedTokenizer | null = null;
+let model: PreTrainedModel | null = null;
+let initPromise: Promise<void> | null = null;
 
-async function ensureLoaded(): Promise<boolean> {
-  if (tokenizer && model) return true;
+async function ensureLoaded(): Promise<void> {
+  if (tokenizer && model) return;
   if (initPromise) return initPromise;
 
   initPromise = (async () => {
-    try {
-      const { AutoTokenizer, AutoModelForSequenceClassification } = await import('@huggingface/transformers');
-      tokenizer = await AutoTokenizer.from_pretrained(MODEL_ID);
-      model = await AutoModelForSequenceClassification.from_pretrained(MODEL_ID, {
-        dtype: 'fp32',
-      });
-      console.log(`Re-ranker model loaded: ${MODEL_ID}`);
-      return true;
-    } catch {
-      if (!warned) {
-        console.warn('Re-ranker disabled: @huggingface/transformers not installed.');
-        warned = true;
-      }
-      return false;
-    }
+    tokenizer = await AutoTokenizer.from_pretrained(MODEL_ID);
+    model = await AutoModelForSequenceClassification.from_pretrained(MODEL_ID, {
+      dtype: 'fp32',
+    });
+    console.log(`Re-ranker model loaded: ${MODEL_ID}`);
   })();
 
   return initPromise;
@@ -68,7 +61,6 @@ function sigmoid(x: number): number {
 /**
  * Re-rank candidate passages against a query using the cross-encoder.
  * Returns results sorted by relevance score (descending).
- * Returns original order with score 0 if re-ranker is unavailable.
  */
 export async function rerank(
   query: string,
@@ -76,10 +68,7 @@ export async function rerank(
 ): Promise<RerankResult[]> {
   if (passages.length === 0) return [];
 
-  const loaded = await ensureLoaded();
-  if (!loaded) {
-    return passages.map((_, i) => ({ index: i, score: 0 }));
-  }
+  await ensureLoaded();
 
   const results: RerankResult[] = [];
 
