@@ -30,8 +30,8 @@ fs.mkdirSync(tmpDir, { recursive: true });
 const resolvedDir = path.resolve(projectDir);
 let workspaceName = 'DEFAULT';
 try {
-  const config = JSON.parse(fs.readFileSync(path.join(synapseDir, 'synapse.config.json'), 'utf8'));
-  const workspaces = config.workspaces || {};
+  const wsConfig = JSON.parse(fs.readFileSync(path.join(synapseDir, 'synapse.workspaces.json'), 'utf8'));
+  const workspaces = wsConfig.workspaces || {};
   for (const [, ws] of Object.entries(workspaces)) {
     if (path.resolve(ws.projectDir).toLowerCase() === resolvedDir.toLowerCase()) {
       workspaceName = ws.name;

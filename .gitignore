@@ -27,8 +27,11 @@ Thumbs.db
 *.swo
 
 # Runtime state
-orchestrator_state.json
+coordinator_state.json
 .compact-breadcrumb-*.json
+
+# User-specific workspace config (copy synapse.workspaces.example.json)
+synapse.workspaces.json
 
 # Logs
 *.log
@@ -40,7 +43,7 @@ coverage/
 # Embeddings cache
 embeddings-cache/
 
-# AWM (standalone external dependency — see AgentWorkingMemory project)
+# AWM runtime data dir (legacy — AWM source is now at packages/awm/ via git submodule)
 packages/memory/
 
 # ML models (too large for git — download separately)

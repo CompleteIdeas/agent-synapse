@@ -1,12 +1,12 @@
 # AgentSynapse Install Troubleshooting (Windows)
 
 ## Goal
-Get AgentSynapse running on this machine. The coordinator service must start on http://127.0.0.1:8410, then the hive (orchestrator + workers) can launch.
+Get AgentSynapse running on this machine. AWM with coordination must start on http://127.0.0.1:8400, then the hive (coordinator + workers) can launch.
 
 ## What AgentSynapse Is
-A multi-agent orchestration system for Claude Code. It has 3 packages:
+A multi-agent coordination system for Claude Code. It has these packages:
 - `packages/coordinator` — HTTP API (Fastify + better-sqlite3)
-- `packages/memory` — MCP memory server (better-sqlite3, optional @huggingface/transformers)
+- `packages/awm/` — Git submodule pointing to [AgentWorkingMemory](https://github.com/CompleteIdeas/agent-working-memory) (MCP memory server). Run `git submodule update --init` after cloning.
 - `packages/task-manager` — Sprint/task tracker (Fastify + better-sqlite3)
 
 ## Repo
@@ -19,6 +19,7 @@ A multi-agent orchestration system for Claude Code. It has 3 packages:
 ```
 git clone https://github.com/CompleteIdeas/agent-synapse.git
 cd agent-synapse
+git submodule update --init
 npm install
 ```
 
@@ -101,7 +102,7 @@ Common errors:
 ## Verify It Works
 
 ```
-curl http://127.0.0.1:8410/health
+curl http://127.0.0.1:8400/health
 ```
 Should return `{"status":"ok"}`.
 
@@ -110,6 +111,7 @@ Should return `{"status":"ok"}`.
 From the `agent-synapse` folder:
 ```
 git pull
+git submodule update --init
 npm install
 npm run build
 ```

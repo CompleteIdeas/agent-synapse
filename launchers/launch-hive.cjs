@@ -20,21 +20,21 @@ function sleepSync(ms) {
 }
 const LAUNCHER_DIR = __dirname;
 
-// Load workspace config from synapse.config.json
-const configPath = path.join(SYNAPSE_DIR, 'synapse.config.json');
+// Load workspace config from synapse.workspaces.json (user-specific, gitignored)
+const wsConfigPath = path.join(SYNAPSE_DIR, 'synapse.workspaces.json');
 let WORKSPACES = {};
 try {
-  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  WORKSPACES = config.workspaces || {};
+  const wsConfig = JSON.parse(fs.readFileSync(wsConfigPath, 'utf8'));
+  WORKSPACES = wsConfig.workspaces || {};
 } catch (err) {
-  console.error(`  ERROR: Cannot read ${configPath}: ${err.message}`);
+  console.error(`  ERROR: Cannot read ${wsConfigPath}: ${err.message}`);
+  console.error('  Copy synapse.workspaces.example.json to synapse.workspaces.json and fill in your paths.');
   process.exit(1);
 }
 
 if (Object.keys(WORKSPACES).length === 0) {
-  console.error('  ERROR: No workspaces defined in synapse.config.json.');
-  console.error('  Add a "workspaces" key with at least one workspace config.');
-  console.error('  Example: { "workspaces": { "personal": { "name": "PERSONAL", "projectDir": "...", "agents": [...] } } }');
+  console.error('  ERROR: No workspaces defined in synapse.workspaces.json.');
+  console.error('  Copy synapse.workspaces.example.json to synapse.workspaces.json and fill in your paths.');
   process.exit(1);
 }
 

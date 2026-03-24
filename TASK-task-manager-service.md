@@ -52,7 +52,7 @@ packages/task-manager/
 | Validation | Zod 4 | Already in the EquiHub version, AWM uses it |
 | Auth | Bearer token (`TM_API_KEY` env var) | Same pattern as AWM |
 | Language | TypeScript (ES2022, strict) | Matches all packages |
-| Port | 8420 | Following 8400 (memory), 8410 (coordinator) |
+| Port | 8420 | Following 8400 (AWM + coordination) |
 
 ### Environment Variables
 
@@ -221,7 +221,7 @@ services:
 
   coordinator:
     build: packages/coordinator
-    ports: ["8410:8410"]
+    ports: ["8400:8400"]
     volumes: ["./data:/data"]
 
   task-manager:
@@ -234,7 +234,7 @@ services:
 
 ### Coordinator Dockerfile (NEW — doesn't have one yet)
 
-Same multi-stage Alpine pattern. Expose 8410, volume `/data`.
+Same multi-stage Alpine pattern. Expose 8400, volume `/data`.
 
 ---
 
@@ -254,15 +254,15 @@ curl -s "http://127.0.0.1:8420/tasks?status=ready&limit=20"
 
 The orchestrator's main loop becomes:
 1. Poll `GET /tasks?status=ready` from task manager (port 8420)
-2. Check `GET /workers?status=idle` from coordinator (port 8410)
-3. Assign via `POST /assign` on coordinator (port 8410)
+2. Check `GET /workers?status=idle` from coordinator (port 8400)
+3. Assign via `POST /assign` on coordinator (port 8400)
 4. On completion, update task status via `PUT /tasks/:id/status` on task manager
 
 ### Launcher Update
 
 Update `launchers/start-all.bat` to start 4 services:
 1. Task Manager (port 8420)
-2. Coordinator (port 8410)
+2. Coordinator (port 8400)
 3. Orchestrator (Claude session)
 4. Workers (Claude sessions)
 
