@@ -55,21 +55,33 @@ export function registerStatusRoutes(app: FastifyInstance): void {
   // Available workers — who's checked in and ready for assignments
   app.get('/workers', async (req, reply) => {
     const q = workersQuerySchema.safeParse(req.query);
-    const { capability, status: filterStatus } = q.success ? q.data : { capability: undefined, status: undefined };
+    const { capability, status: filterStatus, workspace } = q.success ? q.data : { capability: undefined, status: undefined, workspace: undefined };
     const db = getDb();
 
-    // Get all non-dead, non-orchestrator agents
-    let workers = db.prepare(
-      `SELECT id, name, role, status, current_task, capabilities, last_seen,
-              ROUND((julianday('now') - julianday(last_seen)) * 86400) AS seconds_since_seen
-       FROM agents
-       WHERE status != 'dead' AND role != 'orchestrator'
-       ORDER BY name`
-    ).all() as Array<{
-      id: string; name: string; role: string; status: string;
-      current_task: string | null; capabilities: string | null;
-      last_seen: string; seconds_since_seen: number;
-    }>;
+    // Get all non-dead, non-orchestrator agents (optionally filtered by workspace)
+    let workers = workspace
+      ? db.prepare(
+          `SELECT id, name, role, status, current_task, capabilities, workspace, last_seen,
+                  ROUND((julianday('now') - julianday(last_seen)) * 86400) AS seconds_since_seen
+           FROM agents
+           WHERE status != 'dead' AND role != 'orchestrator' AND workspace = ?
+           ORDER BY name`
+        ).all(workspace) as Array<{
+          id: string; name: string; role: string; status: string;
+          current_task: string | null; capabilities: string | null;
+          workspace: string | null; last_seen: string; seconds_since_seen: number;
+        }>
+      : db.prepare(
+          `SELECT id, name, role, status, current_task, capabilities, workspace, last_seen,
+                  ROUND((julianday('now') - julianday(last_seen)) * 86400) AS seconds_since_seen
+           FROM agents
+           WHERE status != 'dead' AND role != 'orchestrator'
+           ORDER BY name`
+        ).all() as Array<{
+          id: string; name: string; role: string; status: string;
+          current_task: string | null; capabilities: string | null;
+          workspace: string | null; last_seen: string; seconds_since_seen: number;
+        }>;
 
     // Filter by capability if requested
     if (capability) {
@@ -97,6 +109,7 @@ export function registerStatusRoutes(app: FastifyInstance): void {
       status: w.status,
       currentTask: w.current_task,
       capabilities: w.capabilities ? JSON.parse(w.capabilities) : [],
+      workspace: w.workspace,
       lastSeen: w.last_seen,
       secondsSinceSeen: w.seconds_since_seen,
       alive: w.seconds_since_seen < 120,

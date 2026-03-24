@@ -95,6 +95,19 @@ export function initDb(dbPath: string): Database.Database {
   if (!colNames.includes('capabilities')) {
     db.exec(`ALTER TABLE agents ADD COLUMN capabilities TEXT`);
   }
+  if (!colNames.includes('workspace')) {
+    db.exec(`ALTER TABLE agents ADD COLUMN workspace TEXT`);
+  }
+
+  const assignCols = (db.prepare(`PRAGMA table_info(assignments)`).all() as { name: string }[]).map(c => c.name);
+  if (!assignCols.includes('workspace')) {
+    db.exec(`ALTER TABLE assignments ADD COLUMN workspace TEXT`);
+  }
+
+  const cmdCols = (db.prepare(`PRAGMA table_info(commands)`).all() as { name: string }[]).map(c => c.name);
+  if (!cmdCols.includes('workspace')) {
+    db.exec(`ALTER TABLE commands ADD COLUMN workspace TEXT`);
+  }
 
   return db;
 }

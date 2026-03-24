@@ -9,15 +9,19 @@ export function registerCheckinRoutes(app: FastifyInstance): void {
   app.post('/checkin', async (req, reply) => {
     const parsed = checkinSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0].message });
-    const { name, role, pid, metadata, capabilities } = parsed.data;
+    const { name, role, pid, metadata, capabilities, workspace } = parsed.data;
 
     const db = getDb();
     const capsJson = capabilities ? JSON.stringify(capabilities) : null;
 
-    // Check if agent already registered (by name + still alive)
-    const existing = db.prepare(
-      `SELECT id, status FROM agents WHERE name = ? AND status != 'dead'`
-    ).get(name) as { id: string; status: string } | undefined;
+    // Check if agent already registered (by name + workspace + still alive)
+    const existing = workspace
+      ? db.prepare(
+          `SELECT id, status FROM agents WHERE name = ? AND workspace = ? AND status != 'dead'`
+        ).get(name, workspace) as { id: string; status: string } | undefined
+      : db.prepare(
+          `SELECT id, status FROM agents WHERE name = ? AND workspace IS NULL AND status != 'dead'`
+        ).get(name) as { id: string; status: string } | undefined;
 
     if (existing) {
       // Heartbeat — update last_seen, and refresh capabilities if provided
@@ -29,20 +33,20 @@ export function registerCheckinRoutes(app: FastifyInstance): void {
         `INSERT INTO events (agent_id, event_type, detail) VALUES (?, 'heartbeat', ?)`
       ).run(existing.id, `heartbeat from ${name}`);
 
-      return reply.send({ agentId: existing.id, action: 'heartbeat', status: existing.status });
+      return reply.send({ agentId: existing.id, action: 'heartbeat', status: existing.status, workspace });
     }
 
     // New agent
     const id = randomUUID();
     db.prepare(
-      `INSERT INTO agents (id, name, role, pid, status, metadata, capabilities) VALUES (?, ?, ?, ?, 'idle', ?, ?)`
-    ).run(id, name, role ?? 'worker', pid ?? null, metadata ? JSON.stringify(metadata) : null, capsJson);
+      `INSERT INTO agents (id, name, role, pid, status, metadata, capabilities, workspace) VALUES (?, ?, ?, ?, 'idle', ?, ?, ?)`
+    ).run(id, name, role ?? 'worker', pid ?? null, metadata ? JSON.stringify(metadata) : null, capsJson, workspace ?? null);
 
     db.prepare(
       `INSERT INTO events (agent_id, event_type, detail) VALUES (?, 'registered', ?)`
-    ).run(id, `${name} joined as ${role ?? 'worker'}${capabilities ? ' [' + capabilities.join(', ') + ']' : ''}`);
+    ).run(id, `${name} joined as ${role ?? 'worker'}${workspace ? ' [' + workspace + ']' : ''}${capabilities ? ' [' + capabilities.join(', ') + ']' : ''}`);
 
-    return reply.code(201).send({ agentId: id, action: 'registered', status: 'idle' });
+    return reply.code(201).send({ agentId: id, action: 'registered', status: 'idle', workspace });
   });
 
   // Agent signing off

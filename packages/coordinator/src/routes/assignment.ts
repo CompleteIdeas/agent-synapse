@@ -9,14 +9,14 @@ export function registerAssignmentRoutes(app: FastifyInstance): void {
   app.post('/assign', async (req, reply) => {
     const parsed = assignCreateSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0].message });
-    const { agentId, task, description } = parsed.data;
+    const { agentId, task, description, workspace } = parsed.data;
 
     const db = getDb();
     const id = randomUUID();
 
     db.prepare(
-      `INSERT INTO assignments (id, agent_id, task, description, status) VALUES (?, ?, ?, ?, ?)`
-    ).run(id, agentId ?? null, task, description ?? null, agentId ? 'assigned' : 'pending');
+      `INSERT INTO assignments (id, agent_id, task, description, status, workspace) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(id, agentId ?? null, task, description ?? null, agentId ? 'assigned' : 'pending', workspace ?? null);
 
     if (agentId) {
       db.prepare(
@@ -49,10 +49,18 @@ export function registerAssignmentRoutes(app: FastifyInstance): void {
 
     if (active) return reply.send({ assignment: active });
 
-    // Auto-claim oldest unassigned task for this worker
-    const pending = db.prepare(
-      `SELECT * FROM assignments WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1`
-    ).get() as { id: string } | undefined;
+    // Auto-claim oldest unassigned task for this worker (workspace-aware)
+    // Look up agent's workspace to scope auto-claim
+    const agentRow = db.prepare(`SELECT workspace FROM agents WHERE id = ?`).get(agentId) as { workspace: string | null } | undefined;
+    const agentWorkspace = agentRow?.workspace;
+
+    const pending = agentWorkspace
+      ? db.prepare(
+          `SELECT * FROM assignments WHERE status = 'pending' AND (workspace = ? OR workspace IS NULL) ORDER BY created_at ASC LIMIT 1`
+        ).get(agentWorkspace) as { id: string } | undefined
+      : db.prepare(
+          `SELECT * FROM assignments WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1`
+        ).get() as { id: string } | undefined;
 
     if (pending) {
       // Claim it for this worker atomically
@@ -75,7 +83,13 @@ export function registerAssignmentRoutes(app: FastifyInstance): void {
       }
     }
 
-    return reply.send({ assignment: null });
+    // Compute retry_after hint: short if workers are busy (completions likely soon), long if idle
+    const busyCount = (db.prepare(
+      `SELECT COUNT(*) as c FROM agents WHERE status = 'working' AND last_seen > datetime('now', '-120 seconds')`
+    ).get() as { c: number }).c;
+
+    const retryAfter = busyCount > 0 ? 30 : 300;
+    return reply.send({ assignment: null, retry_after_seconds: retryAfter });
   });
 
   // Agent claims a pending assignment

@@ -22,6 +22,7 @@ export const checkinSchema = z.object({
   pid: z.number().int().positive().optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
   capabilities: z.array(z.string().max(50)).max(20).optional(),
+  workspace: z.string().max(50).optional(),
 });
 
 export const checkoutSchema = z.object({
@@ -34,10 +35,12 @@ export const assignCreateSchema = z.object({
   agentId: z.string().uuid().optional(),
   task: z.string().min(1).max(1000),
   description: z.string().max(5000).optional(),
+  workspace: z.string().max(50).optional(),
 });
 
 export const assignmentQuerySchema = z.object({
   agentId: z.string().uuid().optional(),
+  workspace: z.string().max(50).optional(),
 });
 
 export const assignmentClaimSchema = z.object({
@@ -68,12 +71,14 @@ export const commandCreateSchema = z.object({
   command: commandEnum,
   reason: z.string().max(1000).optional(),
   issuedBy: z.string().max(50).optional(),
+  workspace: z.string().max(50).optional(),
 });
 
 export const commandWaitQuerySchema = z.object({
   status: z.string().max(20).default('idle'),
   timeout: z.coerce.number().int().min(0).max(30).optional(),
   agentId: z.string().optional(),
+  workspace: z.string().max(50).optional(),
 });
 
 // ─── Findings ───────────────────────────────────────────────────
@@ -114,4 +119,5 @@ export const staleQuerySchema = z.object({
 export const workersQuerySchema = z.object({
   capability: z.string().max(50).optional(),
   status: agentStatusEnum.optional(),
+  workspace: z.string().max(50).optional(),
 });
