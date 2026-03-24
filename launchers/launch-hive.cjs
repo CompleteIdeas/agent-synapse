@@ -93,10 +93,14 @@ function launchHive(workspace) {
   fs.mkdirSync(tmpDir, { recursive: true });
 
   const workerBat = path.join(LAUNCHER_DIR, 'start-worker.bat');
+  // Agents must cd to AgentSynapse dir (where .claude/agents/ lives) so --agent flag works
+  const agentSynapseDir = SYNAPSE_DIR;
   const agentScripts = ws.agents.map(agent => {
     const scriptPath = path.join(tmpDir, `launch-${agent.name.toLowerCase()}.bat`);
     let content = '@echo off\r\n';
-    content += `cd /d "${ws.projectDir}"\r\n`;
+    content += `set WORKER_NAME=${agent.name}\r\n`;
+    content += `set PROJECT_DIR=${ws.projectDir}\r\n`;
+    content += `cd /d "${agentSynapseDir}"\r\n`;
     if (agent.delay > 0) content += `timeout /t ${agent.delay} /nobreak >nul\r\n`;
     content += `call "${workerBat}" ${agent.name} "${ws.projectDir}"\r\n`;
     fs.writeFileSync(scriptPath, content);
