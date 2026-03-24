@@ -86,21 +86,31 @@ function launchHive(workspace) {
 
   console.log(`\n  Launching ${ws.agents.length} agents in Windows Terminal...\n`);
 
-  // Build wt command: all tabs in one window
+  // Write temp launcher scripts for each agent (avoids quoting hell in wt args)
+  const fs = require('fs');
+  const os = require('os');
+  const tmpDir = path.join(os.tmpdir(), 'agentsynapse-launch');
+  fs.mkdirSync(tmpDir, { recursive: true });
+
   const workerBat = path.join(LAUNCHER_DIR, 'start-worker.bat');
+  const agentScripts = ws.agents.map(agent => {
+    const scriptPath = path.join(tmpDir, `launch-${agent.name.toLowerCase()}.bat`);
+    let content = '@echo off\r\n';
+    content += `cd /d "${ws.projectDir}"\r\n`;
+    if (agent.delay > 0) content += `timeout /t ${agent.delay} /nobreak >nul\r\n`;
+    content += `call "${workerBat}" ${agent.name} "${ws.projectDir}"\r\n`;
+    fs.writeFileSync(scriptPath, content);
+    return { agent, scriptPath };
+  });
+
+  // Build wt command: all tabs in one window
   const wtArgs = ['-w', `AgentSynapse-${ws.name}`];
 
-  ws.agents.forEach((agent, i) => {
+  agentScripts.forEach(({ agent, scriptPath }, i) => {
     if (i > 0) wtArgs.push(';');
     wtArgs.push('new-tab');
     wtArgs.push('--title', `${agent.name} [${workspace}]`);
-
-    // Build the command: cd to project, optional delay, then launch worker
-    let cmd = `cd /d ${ws.projectDir}`;
-    if (agent.delay > 0) cmd += ` && timeout /t ${agent.delay} /nobreak >nul`;
-    cmd += ` && "${workerBat}" ${agent.name} "${ws.projectDir}"`;
-
-    wtArgs.push('cmd', '/k', cmd);
+    wtArgs.push('cmd', '/k', scriptPath);
   });
 
   // Launch Windows Terminal
@@ -108,13 +118,10 @@ function launchHive(workspace) {
     spawn('wt', wtArgs, { detached: true, stdio: 'ignore' }).unref();
   } catch (err) {
     console.error('  Windows Terminal (wt) not found. Falling back to separate windows...');
-    ws.agents.forEach((agent, i) => {
-      setTimeout(() => {
-        const cmd = `cd /d ${ws.projectDir} && "${workerBat}" ${agent.name} "${ws.projectDir}"`;
-        spawn('cmd', ['/c', 'start', `"${agent.name}"`, 'cmd', '/k', cmd], {
-          detached: true, stdio: 'ignore', shell: true,
-        }).unref();
-      }, agent.delay * 1000);
+    agentScripts.forEach(({ agent, scriptPath }) => {
+      spawn('cmd', ['/c', 'start', `"${agent.name}"`, 'cmd', '/k', scriptPath], {
+        detached: true, stdio: 'ignore', shell: true,
+      }).unref();
     });
   }
 
