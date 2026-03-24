@@ -1,3 +1,3 @@
 @echo off
 cd /d "%~dp0"
-node launch-hive.js personal
+node launch-hive.cjs personal
