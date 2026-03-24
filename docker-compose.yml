@@ -1,18 +1,7 @@
-services:
-  memory:
-    build: packages/memory
-    ports: ["127.0.0.1:8400:8400"]
-    volumes: ["./data:/data", "./models:/models"]
-    environment:
-      AWM_DB_PATH: /data/memory.db
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8400/health"]
-      interval: 30s
-      timeout: 5s
-      start_period: 30s
-      retries: 3
+## AWM (memory) runs externally — see AgentWorkingMemory project.
+## Start it separately: cd AgentWorkingMemory && npx tsx src/index.ts
 
+services:
   coordinator:
     build: packages/coordinator
     ports: ["127.0.0.1:8410:8410"]

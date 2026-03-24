@@ -1,0 +1,17 @@
+{
+  "default": "work",
+  "workspaces": {
+    "work": {
+      "dir": "C:\\Users\\robert\\project",
+      "label": "USEA Work Projects",
+      "namespace": "work",
+      "hive": { "orchestrator": true, "devLead": true, "workers": 3 }
+    },
+    "personal": {
+      "dir": "C:\\Users\\robert\\Personal-Projects",
+      "label": "Personal Projects",
+      "namespace": "personal",
+      "hive": { "orchestrator": true, "devLead": false, "workers": 2 }
+    }
+  }
+}

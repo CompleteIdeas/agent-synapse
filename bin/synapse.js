@@ -21,6 +21,7 @@ const COMMANDS = {
   status: 'Check service health',
   worker: 'Launch a Claude Code worker',
   orchestrator: 'Launch the Claude Code orchestrator',
+  workspaces: 'List registered workspaces',
   help: 'Show this help message',
 };
 
@@ -147,30 +148,32 @@ function cmdInit() {
     copyIfMissing(join(PKG_ROOT, 'commands', cmd), join(commandsDir, cmd), `commands/${cmd}`, force);
   }
 
-  // Copy launchers (bat files for Windows Terminal)
-  if (isWindows()) {
-    log('');
-    log('Launchers:');
-    const launchersDir = join(projectDir, 'launchers');
-    ensureDir(launchersDir);
-    const batFiles = readdirSync(join(PKG_ROOT, 'launchers')).filter(f => f.endsWith('.bat'));
-    for (const bat of batFiles) {
-      copyIfMissing(join(PKG_ROOT, 'launchers', bat), join(launchersDir, bat), `launchers/${bat}`, force);
-    }
+  // Register workspace (replaces launcher copying)
+  log('');
+  log('Workspace:');
+  const wsName = basename(projectDir).toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  const wsConfigPath = join(PKG_ROOT, 'synapse.workspaces.json');
+  let wsConfig;
+  try {
+    wsConfig = JSON.parse(readFileSync(wsConfigPath, 'utf-8'));
+  } catch {
+    wsConfig = { default: wsName, workspaces: {} };
   }
 
-  // Write .synapse-path so launchers know where AgentSynapse is installed
-  // Use relative path from launchers/ dir so it's portable across machines
-  const launchersAbs = resolve(projectDir, 'launchers');
-  const relPath = relative(launchersAbs, PKG_ROOT);
-  const synapsePathFile = join(launchersAbs, '.synapse-path');
-  writeFileSync(synapsePathFile, relPath);
-  logOk(`.synapse-path → ${relPath}`);
-
-  // Copy synapse.config.json
-  log('');
-  log('Config:');
-  copyIfMissing(join(PKG_ROOT, 'synapse.config.json'), join(projectDir, 'synapse.config.json'), 'synapse.config.json', force);
+  if (wsConfig.workspaces[wsName] && !force) {
+    logSkip(`workspace "${wsName}" (already registered)`);
+  } else {
+    wsConfig.workspaces[wsName] = {
+      dir: projectDir,
+      label: basename(projectDir),
+      namespace: wsName,
+      hive: { orchestrator: true, devLead: true, workers: 3 },
+    };
+    if (!wsConfig.default) wsConfig.default = wsName;
+    writeFileSync(wsConfigPath, JSON.stringify(wsConfig, null, 2) + '\n');
+    logOk(`workspace "${wsName}" registered → ${projectDir}`);
+  }
+  log(`  Launchers: ${join(PKG_ROOT, 'launchers')}`);
 
   // Create/merge .claude/settings.json with hook config
   const settingsPath = join(claudeDir, 'settings.json');
@@ -192,9 +195,9 @@ function cmdInit() {
       mcpServers: {
         'agent-working-memory': {
           command: 'npx',
-          args: ['tsx', join(PKG_ROOT, 'packages', 'memory', 'src', 'mcp.ts')],
+          args: ['tsx', join(process.env.AWM_PROJECT_DIR || join(PKG_ROOT, '..', 'AgentWorkingMemory'), 'src', 'mcp.ts')],
           env: {
-            AWM_DB_PATH: join(projectDir, 'data', 'memory.db'),
+            AWM_DB_PATH: join(process.env.AWM_PROJECT_DIR || join(PKG_ROOT, '..', 'AgentWorkingMemory'), 'memory.db'),
           },
         },
       },
@@ -206,9 +209,10 @@ function cmdInit() {
     log('  → Run with --force to update MCP config');
   }
 
-  // Create data directory
+  // Create data directories (project-local for coord/tasks, central for memory)
   ensureDir(join(projectDir, 'data'));
-  logOk('data/ directory');
+  ensureDir(join(PKG_ROOT, 'data'));
+  logOk('data/ directories (project + central AWM)');
 
   // Add data/ to .gitignore if not already there
   const gitignorePath = join(projectDir, '.gitignore');
@@ -224,8 +228,9 @@ function cmdInit() {
   log('');
   log('Next steps:');
   if (isWindows()) {
-    log('  Option A — Windows Terminal (recommended):');
-    log('    launchers\\start-all.bat              # Services + orchestrator + 3 workers');
+    const launcherPath = join(PKG_ROOT, 'launchers');
+    log(`  Option A — Windows Terminal (recommended):`);
+    log(`    ${launcherPath}\\start-all.bat ${wsName}`);
     log('');
     log('  Option B — Manual:');
   }
@@ -233,15 +238,17 @@ function cmdInit() {
   log('  2. Launch orchestrator: npx agent-synapse orchestrator');
   log('  3. Launch workers:     npx agent-synapse worker');
   log('');
+  log(`  Workspace: "${wsName}" — change default in synapse.workspaces.json`);
+  log('');
 }
 
 // ─── start ──────────────────────────────────────────────────────────────────
 
 function cmdStart() {
-  const services = ['memory', 'coordinator', 'task-manager'];
-  const ports = { memory: 8400, coordinator: 8410, 'task-manager': 8420 };
+  const services = ['coordinator', 'task-manager'];
+  const ports = { coordinator: 8410, 'task-manager': 8420 };
 
-  header('Starting AgentSynapse services');
+  header('Starting AgentSynapse services (AWM runs externally)');
 
   // Check if already running
   for (const svc of services) {
@@ -278,7 +285,7 @@ function cmdStart() {
     ensureDir(join(PKG_ROOT, 'data'));
 
     const env = { ...process.env };
-    if (svc === 'memory') env.AWM_DB_PATH = env.AWM_DB_PATH || join(process.cwd(), 'data', 'memory.db');
+    // AWM (memory) runs externally — not started by AgentSynapse
     if (svc === 'coordinator') env.COORD_DB = env.COORD_DB || join(process.cwd(), 'data', 'coord.db');
     if (svc === 'task-manager') env.TM_DB_PATH = env.TM_DB_PATH || join(process.cwd(), 'data', 'task.db');
 
@@ -302,7 +309,7 @@ function cmdStart() {
   log('');
   log('Waiting for services to come up...');
   setTimeout(() => {
-    const allPorts = { memory: 8400, coordinator: 8410, 'task-manager': 8420 };
+    const allPorts = { coordinator: 8410, 'task-manager': 8420 };
     for (const [svc, port] of Object.entries(allPorts)) {
       const healthy = checkHealth(`http://127.0.0.1:${port}`);
       if (healthy) {
@@ -352,7 +359,7 @@ function cmdStop() {
 
 function cmdStatus() {
   const services = [
-    { name: 'memory', port: 8400 },
+    { name: 'AWM (external)', port: 8400 },
     { name: 'coordinator', port: 8410 },
     { name: 'task-manager', port: 8420 },
   ];
@@ -571,6 +578,34 @@ function cmdShutdown() {
   waitLoop();
 }
 
+// ─── workspaces ─────────────────────────────────────────────────────────────
+
+function cmdWorkspaces() {
+  const wsConfigPath = join(PKG_ROOT, 'synapse.workspaces.json');
+  if (!existsSync(wsConfigPath)) {
+    logErr('No workspaces configured. Run "npx agent-synapse init" in a project first.');
+    process.exit(1);
+  }
+
+  const wsConfig = JSON.parse(readFileSync(wsConfigPath, 'utf-8'));
+  const defaultWs = wsConfig.default;
+
+  header('Registered Workspaces');
+
+  for (const [name, ws] of Object.entries(wsConfig.workspaces)) {
+    const isDefault = name === defaultWs ? ' (default)' : '';
+    log(`  ${name}${isDefault}`);
+    log(`    Dir:       ${ws.dir}`);
+    log(`    Namespace: ${ws.namespace || name}`);
+    log(`    Hive:      ${ws.hive?.workers ?? 3} workers${ws.hive?.devLead ? ' + dev-lead' : ''}`);
+    log('');
+  }
+
+  log(`Launchers: ${join(PKG_ROOT, 'launchers')}`);
+  log(`Config:    ${wsConfigPath}`);
+  log('');
+}
+
 // ─── help ───────────────────────────────────────────────────────────────────
 
 function cmdHelp() {
@@ -636,6 +671,10 @@ switch (command) {
     break;
   case 'orchestrator':
     cmdOrchestrator();
+    break;
+  case 'workspaces':
+  case 'ws':
+    cmdWorkspaces();
     break;
   case 'help':
   case '--help':

@@ -116,14 +116,17 @@ Obey BUILD_FREEZE, PAUSE, SHUTDOWN as any worker would.
 curl -s "http://127.0.0.1:8410/assignment?agentId=AGENT_ID"
 ```
 
-If no assignment, enter idle poll loop. **Each poll iteration MUST be a separate Bash tool call** (NOT a bash for-loop) so you can read the response and break out when an assignment arrives:
+If no assignment, enter idle poll loop. **Each poll iteration MUST be a separate Bash tool call** (NOT a bash for-loop) so you can read the response and break out when an assignment arrives.
+
+**Exponential backoff:** Polls 1-3: 30s, Polls 4-6: 60s, Polls 7-10: 120s, Polls 11-20: 300s. After 20 idle polls → enter **PARKED** state (stop polling, write `memory_checkpoint`, output "PARKED — no work available. Send a message to wake me." and wait for user/RESUME).
 
 ```bash
-# One iteration per Bash call — read the output, then decide whether to poll again
-sleep 30 && curl -s -X POST http://127.0.0.1:8410/checkin -H "Content-Type: application/json" -d '{"name":"Dev-Lead","role":"worker"}' && curl -s http://127.0.0.1:8410/command && curl -s "http://127.0.0.1:8410/assignment?agentId=AGENT_ID"
+# One iteration per Bash call — use appropriate delay from backoff schedule
+sleep DELAY && curl -s -X POST http://127.0.0.1:8410/checkin -H "Content-Type: application/json" -d '{"name":"Dev-Lead","role":"worker"}' && curl -s http://127.0.0.1:8410/command && curl -s "http://127.0.0.1:8410/assignment?agentId=AGENT_ID"
 ```
 
-If assignment is not null → do the work. If null → make another identical Bash call.
+**Do NOT output anything during idle polling.** Only output on state transitions.
+If assignment is not null → reset poll count to 0, do the work. If null → increment count, poll again.
 
 ### 5. Do the research
 
@@ -147,7 +150,7 @@ memory_write:
 
 ### 7. Loop for more work
 
-Go back to idle poll. The orchestrator may assign you another scoping task.
+Reset idle poll count to 0. Go back to idle poll with fresh backoff. The orchestrator may assign you another scoping task. After 20 idle polls → enter PARKED state.
 
 ## API Quick Reference
 

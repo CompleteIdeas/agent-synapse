@@ -1,12 +1,12 @@
 {
   "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/mcp-schema.json",
-  "_comment": "Example MCP config for connecting Claude Code to the AgentSynapse memory server. Place in .claude/mcp.json or ~/.claude/mcp.json",
+  "_comment": "Example MCP config — AWM runs as standalone external service. Point to AgentWorkingMemory project.",
   "mcpServers": {
     "agent-working-memory": {
       "command": "npx",
-      "args": ["tsx", "/path/to/agent-synapse/packages/memory/src/mcp.ts"],
+      "args": ["tsx", "/path/to/AgentWorkingMemory/src/mcp.ts"],
       "env": {
-        "AWM_DB_PATH": "/path/to/your-project/data/memory.db"
+        "AWM_DB_PATH": "/path/to/data/memory.db"
       }
     }
   }

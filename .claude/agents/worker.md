@@ -88,33 +88,47 @@ curl -s "http://127.0.0.1:8410/assignment?agentId=AGENT_ID"
 
 **You MUST poll for work. Do NOT stop and wait for the user.**
 
-**CRITICAL: Each poll iteration MUST be a SEPARATE Bash tool call.** Do NOT combine multiple iterations into a single bash for-loop or while-loop. You need to read the assignment response after each poll so you can break out when work arrives. A bash for-loop runs to completion before you see any output — you'll miss your assignment.
+**CRITICAL: Each poll iteration MUST be a SEPARATE Bash tool call.** Do NOT combine multiple iterations into a single bash for-loop or while-loop. You need to read the assignment response after each poll so you can break out when work arrives.
 
-**Each iteration (one Bash call):**
+##### Exponential Backoff Schedule
+
+Track your idle poll count (starting at 0). Use this delay schedule:
+
+| Polls 1-3 | Polls 4-6 | Polls 7-10 | Polls 11-20 | Polls 21+ |
+|-----------|-----------|------------|-------------|-----------|
+| 30s | 60s | 120s | 300s (5 min) | **PARK** |
+
+**Each iteration (one Bash call) — use the appropriate sleep time:**
 ```bash
-sleep 30 && curl -s -X POST http://127.0.0.1:8410/checkin -H "Content-Type: application/json" -d '{"name":"YOUR_WORKER_NAME","role":"worker"}' && curl -s http://127.0.0.1:8410/command && curl -s "http://127.0.0.1:8410/assignment?agentId=AGENT_ID"
+sleep DELAY && curl -s -X POST http://127.0.0.1:8410/checkin -H "Content-Type: application/json" -d '{"name":"YOUR_WORKER_NAME","role":"worker"}' && curl -s http://127.0.0.1:8410/command && curl -s "http://127.0.0.1:8410/assignment?agentId=AGENT_ID"
 ```
 
 **After each call, READ the output:**
 - If command has `SHUTDOWN` → follow shutdown protocol
 - If command has `BUILD_FREEZE` or `PAUSE` → wait
-- If assignment is NOT null → **you have work — continue to step 5**
-- If assignment is null → **make another Bash call** (same command above)
+- If assignment is NOT null → **you have work — reset poll count to 0, continue to step 5**
+- If assignment is null → **increment poll count, check if PARK threshold reached, otherwise poll again**
 
-**WRONG — do NOT do this:**
-```bash
-# BAD: bash for-loop runs all iterations without stopping
-for i in $(seq 1 6); do sleep 30; curl ...; done
-```
+**Do NOT output anything during idle polling.** No status messages, no "still waiting", no summaries. Just the silent Bash call. Only output on state transitions (got work, got command, entering PARKED).
 
-**RIGHT — do this:**
-```bash
-# GOOD: single iteration, you read the output, then decide
-sleep 30 && curl -s -X POST http://127.0.0.1:8410/checkin ... && curl -s "http://127.0.0.1:8410/assignment?agentId=AGENT_ID"
-```
-Then read the result. If no assignment, make another identical Bash call. Repeat.
+##### PARKED State (after 20 idle polls)
 
-**Keep polling. You are a persistent worker, not a one-shot script.**
+After 20 idle polls with no assignment (~15 minutes with backoff), enter PARKED state:
+
+1. Write `memory_checkpoint` with current state
+2. Output exactly: **"PARKED — no work available. Send a message or RESUME command to wake me."**
+3. **Stop polling. Do nothing.** Wait for user input or a command.
+
+**On wake (user message or RESUME command):**
+1. Reset poll count to 0
+2. Checkin to coordinator
+3. Check for assignment
+4. If assignment → work. If not → re-enter idle poll loop from poll count 0.
+
+##### Rules
+- **WRONG:** `for i in $(seq 1 6); do sleep 30; curl ...; done` (bash loop runs blind)
+- **RIGHT:** One Bash call per iteration, read output, decide next action
+- **Reset backoff** whenever you receive an assignment or complete a task
 
 ### 5. Read Your Assignment and Adapt
 
@@ -207,8 +221,9 @@ curl -s http://127.0.0.1:8410/command
 2. **Commit current work** if in a good state
 3. **Release all locks**
 4. **Heartbeat as idle**
-5. **Wait** — poll `/command` every 30 seconds until RESUME
+5. **Wait** — poll `/command` every 60 seconds until RESUME (max 15 minutes)
 6. **On RESUME** — re-lock your files and continue
+7. **Auto-timeout** — if no RESUME after 15 minutes, output a warning: "BUILD_FREEZE timeout (15 min) — resuming work. If freeze is still needed, re-issue the command." Then resume as if RESUME was received.
 
 ## Task Complete Protocol
 
@@ -249,10 +264,12 @@ You are a **persistent worker**. After completing a task:
 
 1. Mark assignment completed (PATCH /assignment/:id)
 2. Write AWM outcome summary
-3. **Go back to the idle poll loop** — sleep 30, heartbeat, check commands, check assignment, repeat
-4. When a new assignment appears → **recall AWM for the new task area**, then work on it
-5. **NEVER exit on your own.** Only SHUTDOWN ends your session.
-6. **NEVER ask "What should I do next?"** — work comes from the coordinator API.
+3. **Reset idle poll count to 0**
+4. **Go back to the idle poll loop** with fresh backoff (starts at 30s)
+5. When a new assignment appears → **recall AWM for the new task area**, then work on it
+6. **NEVER exit on your own.** Only SHUTDOWN ends your session.
+7. **NEVER ask "What should I do next?"** — work comes from the coordinator API.
+8. After 20 idle polls → enter **PARKED** state (stop polling, wait for wake signal).
 
 ## API Quick Reference (DO NOT GUESS endpoints)
 
