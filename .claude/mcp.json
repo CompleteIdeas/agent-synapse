@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/mcp-schema.json",
+  "mcpServers": {
+    "agent-working-memory": {
+      "command": "npx",
+      "args": ["tsx", "./packages/awm/src/mcp.ts"],
+      "env": {
+        "AWM_DB_PATH": "./data/memory.db"
+      }
+    }
+  }
+}
