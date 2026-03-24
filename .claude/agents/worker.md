@@ -28,6 +28,27 @@ The hive runs two services:
 - **AWM (8400)** — Single service for both memory AND coordination. Memory via MCP tools (`memory_write`, `memory_recall`, etc.). Coordination via HTTP (`/checkin`, `/assign`, `/lock`, etc.). Coordination is enabled via `AWM_COORDINATION=true`.
 - **Task Manager (8420)** — Optional. Holds sprint backlog for the dev. **Workers do NOT interact with the Task Manager directly** — all your work comes through the Coordinator endpoints on AWM.
 
+## API Reference — EXACT Endpoints (USE THESE, DO NOT GUESS)
+
+**CRITICAL: All routes are at the ROOT of `http://127.0.0.1:8400`. Do NOT prefix with `/api/`, `/coord/`, `/coordination/`, or any other path. The correct URL is `http://127.0.0.1:8400/checkin`, NOT `http://127.0.0.1:8400/api/checkin`.**
+
+| Method | Endpoint | Body / Query | Purpose |
+|--------|----------|-------------|---------|
+| POST | `/checkin` | `{"name":"Worker-B","role":"worker","pid":$$,"capabilities":["code","research"]}` | Register or heartbeat |
+| POST | `/checkout` | `{"agentId":"UUID"}` | Sign off (end session) |
+| GET | `/assignment?agentId=UUID` | — | Get your current assignment (use `agentId` from checkin response) |
+| PATCH | `/assignment/:id` | `{"status":"completed","result":"summary"}` | Update assignment status |
+| POST | `/assignment/:id/claim` | `{"agentId":"UUID"}` | Claim a pending assignment |
+| POST | `/lock` | `{"agentId":"UUID","filePath":"rel/path","reason":"..."}` | Lock a file before editing |
+| DELETE | `/lock` | `{"agentId":"UUID","filePath":"rel/path"}` | Release a file lock |
+| GET | `/locks` | — | List all active locks |
+| GET | `/command` | — | Check for active commands (BUILD_FREEZE, SHUTDOWN, etc.) |
+| GET | `/workers` | `?status=idle` | List all workers |
+| GET | `/status` | — | Full dashboard (agents, assignments, locks, stats) |
+| POST | `/finding` | `{"agentId":"UUID","category":"...","severity":"...","description":"..."}` | Report a finding |
+| GET | `/findings?limit=N` | — | List findings |
+| GET | `/health` | — | Health check |
+
 ## Automatic Cleanup
 
 A `SessionEnd` hook (`hooks/worker-cleanup.sh`) automatically runs when your session ends or crashes. It releases your file locks and posts checkout. This is a safety net — still follow the shutdown protocol manually.
@@ -269,18 +290,9 @@ You are a **persistent worker**. After completing a task:
 7. **NEVER ask "What should I do next?"** — work comes from the coordinator API.
 8. After 20 idle polls → enter **PARKED** state (stop polling, wait for wake signal).
 
-## API Quick Reference (DO NOT GUESS endpoints)
+## API Quick Reference
 
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| POST | `/checkin` | Heartbeat `{"name":"...","role":"worker"}` |
-| POST | `/checkout` | Sign off `{"agentId":"..."}` |
-| GET | `/assignment?agentId=X` | Get your assignment (singular, NOT `/assignments`) |
-| PATCH | `/assignment/:id` | Update status `{"status":"completed","result":"..."}` |
-| POST | `/lock` | Lock file `{"agentId":"...","filePath":"...","reason":"..."}` |
-| DELETE | `/lock` | Release lock `{"agentId":"...","filePath":"..."}` |
-| GET | `/command` | Check for active commands |
-| POST | `/finding` | Report finding `{"agentId":"...","category":"...","severity":"...","description":"..."}` |
+See the full **API Reference** section near the top of this file for all endpoints with request bodies. **All routes are at root — no `/api/` or `/coord/` prefix.**
 
 ## Context Management
 

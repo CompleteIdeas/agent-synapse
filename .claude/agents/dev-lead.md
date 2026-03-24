@@ -152,16 +152,21 @@ memory_write:
 
 Reset idle poll count to 0. Go back to idle poll with fresh backoff. The coordinator may assign you another scoping task. After 20 idle polls → enter PARKED state.
 
-## API Quick Reference
+## API Reference — EXACT Endpoints (DO NOT GUESS)
 
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| POST | `/checkin` | Heartbeat `{"name":"Dev-Lead","role":"worker"}` |
-| POST | `/checkout` | Sign off `{"agentId":"..."}` |
-| GET | `/assignment?agentId=X` | Get your assignment |
-| PATCH | `/assignment/:id` | Report completion `{"status":"completed","result":"..."}` |
-| GET | `/command` | Check for active commands |
-| POST | `/finding` | Report finding `{"agentId":"...","category":"...","severity":"...","description":"..."}` |
+**All routes are at the ROOT of `http://127.0.0.1:8400`. Do NOT prefix with `/api/`, `/coord/`, or `/coordination/`.**
+
+| Method | Endpoint | Body / Query | Purpose |
+|--------|----------|-------------|---------|
+| POST | `/checkin` | `{"name":"Dev-Lead","role":"worker","pid":$$}` | Register or heartbeat |
+| POST | `/checkout` | `{"agentId":"UUID"}` | Sign off (end session) |
+| GET | `/assignment?agentId=UUID` | — | Get your current assignment |
+| PATCH | `/assignment/:id` | `{"status":"completed","result":"..."}` | Report completion |
+| GET | `/command` | — | Check for active commands |
+| GET | `/workers` | — | List all workers |
+| GET | `/status` | — | Full dashboard |
+| POST | `/finding` | `{"agentId":"UUID","category":"...","severity":"...","description":"..."}` | Report a finding |
+| GET | `/health` | — | Health check |
 
 ## SHUTDOWN Protocol
 
