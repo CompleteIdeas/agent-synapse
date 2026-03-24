@@ -12,6 +12,10 @@ const { execSync, spawn } = require('child_process');
 const path = require('path');
 
 const SYNAPSE_DIR = path.resolve(__dirname, '..');
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
 const LAUNCHER_DIR = __dirname;
 
 const WORKSPACES = {
@@ -19,7 +23,7 @@ const WORKSPACES = {
     name: 'PERSONAL',
     projectDir: 'C:\\Users\\robert\\Personal-Projects',
     agents: [
-      { name: 'orchestrator', role: 'orchestrator', delay: 0 },
+      { name: 'coordinator', role: 'coordinator', delay: 0 },
       { name: 'Dev-Lead', role: 'dev-lead', delay: 5 },
       { name: 'Worker-B', role: 'worker', delay: 8 },
       { name: 'Worker-C', role: 'worker', delay: 11 },
@@ -29,7 +33,7 @@ const WORKSPACES = {
     name: 'WORK',
     projectDir: 'C:\\Users\\robert\\project',
     agents: [
-      { name: 'orchestrator', role: 'orchestrator', delay: 0 },
+      { name: 'coordinator', role: 'coordinator', delay: 0 },
       { name: 'Dev-Lead', role: 'dev-lead', delay: 5 },
       { name: 'Worker-A', role: 'worker', delay: 8 },
       { name: 'Worker-B', role: 'worker', delay: 11 },
@@ -38,31 +42,32 @@ const WORKSPACES = {
   },
 };
 
-function isCoordinatorRunning() {
+function killPort8400() {
   try {
-    execSync('curl -s http://127.0.0.1:8410/health', { stdio: 'pipe', timeout: 3000 });
+    const out = execSync('netstat -aon', { encoding: 'utf8', timeout: 5000, shell: 'cmd.exe' });
+    const lines = out.split('\n').filter(l => l.includes(':8400') && l.includes('LISTENING'));
+    for (const line of lines) {
+      const pid = line.trim().split(/\s+/).pop();
+      if (pid && /^\d+$/.test(pid)) {
+        try { execSync(`taskkill /F /PID ${pid}`, { stdio: 'pipe', shell: 'cmd.exe' }); } catch {}
+      }
+    }
+  } catch {}
+}
+
+function isAWMRunning() {
+  try {
+    execSync('curl -s http://127.0.0.1:8400/health', { stdio: 'pipe', timeout: 3000 });
     return true;
   } catch { return false; }
 }
 
-function startCoordinator() {
-  console.log('  Starting coordinator...');
-  spawn('cmd', ['/c', `cd /d ${SYNAPSE_DIR} && npx tsx packages/coordinator/src/index.ts`], {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true,
-  }).unref();
-
-  // Wait for it
-  for (let i = 0; i < 15; i++) {
-    execSync('timeout /t 2 /nobreak >nul', { shell: true });
-    if (isCoordinatorRunning()) {
-      console.log('  Coordinator: ready');
-      return true;
-    }
-  }
-  console.error('  ERROR: Coordinator failed to start!');
-  return false;
+function isCoordinationRunning() {
+  try {
+    const out = execSync('curl -s http://127.0.0.1:8400/workers', { stdio: 'pipe', timeout: 3000, encoding: 'utf8' });
+    const j = JSON.parse(out);
+    return typeof j.count === 'number';
+  } catch { return false; }
 }
 
 function launchHive(workspace) {
@@ -77,11 +82,46 @@ function launchHive(workspace) {
   console.log(`  ${'='.repeat(30)}`);
   console.log(`  Project: ${ws.projectDir}\n`);
 
-  // Ensure coordinator
-  if (isCoordinatorRunning()) {
-    console.log('  Coordinator: already running');
+  // Ensure AWM is running WITH coordination enabled
+  const awmDir = path.join(SYNAPSE_DIR, 'packages', 'awm');
+  if (isCoordinationRunning()) {
+    console.log('  AWM + Coordination: already running');
   } else {
-    if (!startCoordinator()) process.exit(1);
+    if (isAWMRunning()) {
+      console.log('  AWM is running but coordination is NOT enabled. Restarting...');
+      // Kill process on port 8400 (no /shutdown endpoint exists)
+      killPort8400();
+      sleepSync(3000);
+    }
+
+    console.log('  Starting AWM with coordination...');
+    const fs = require('fs');
+    const dataDir = path.join(SYNAPSE_DIR, 'data');
+    fs.mkdirSync(dataDir, { recursive: true });
+    const awmLogFd = fs.openSync(path.join(dataDir, 'awm.log'), 'a');
+    spawn('npx tsx src/index.ts', [], {
+      cwd: awmDir,
+      detached: true,
+      stdio: ['ignore', awmLogFd, awmLogFd],
+      windowsHide: true,
+      shell: true,
+      env: { ...process.env, AWM_COORDINATION: 'true' },
+    }).unref();
+
+    // Wait for coordination to be ready (not just health)
+    let awmReady = false;
+    for (let i = 0; i < 20; i++) {
+      sleepSync(2000);
+      if (isCoordinationRunning()) {
+        console.log('  AWM + Coordination: ready');
+        awmReady = true;
+        break;
+      }
+    }
+    if (!awmReady) {
+      console.error('  ERROR: AWM with coordination failed to start within 40 seconds.');
+      process.exit(1);
+    }
   }
 
   console.log(`\n  Launching ${ws.agents.length} agents in Windows Terminal...\n`);
@@ -132,7 +172,7 @@ function launchHive(workspace) {
   console.log(`  ${ws.name} hive launched (${ws.agents.length} agents):`);
   console.log(`    ${ws.agents.map(a => a.name).join(' + ')}`);
   console.log(`  Project: ${ws.projectDir}`);
-  console.log(`\n  Status:   curl http://127.0.0.1:8410/workers`);
+  console.log(`\n  Status:   curl http://127.0.0.1:8400/workers`);
   console.log(`  Shutdown: node ${path.join(LAUNCHER_DIR, 'launch-hive.js')} shutdown`);
   console.log();
 }
@@ -157,7 +197,7 @@ if (!arg) {
     else if (choice === '2') launchHive('work');
     else if (choice === '3') {
       try {
-        const out = execSync('curl -s http://127.0.0.1:8410/workers', { encoding: 'utf8' });
+        const out = execSync('curl -s http://127.0.0.1:8400/workers', { encoding: 'utf8' });
         const j = JSON.parse(out);
         console.log(`\n  Workers: ${j.count} (${j.idle} idle, ${j.working} working)`);
         j.workers.forEach(w => console.log(`    ${w.name.padEnd(12)} ${w.status.padEnd(8)} ${w.alive ? 'alive' : 'STALE'}`));
@@ -172,7 +212,7 @@ if (!arg) {
   launchHive(arg);
 } else if (arg === 'status') {
   try {
-    const out = execSync('curl -s http://127.0.0.1:8410/workers', { encoding: 'utf8' });
+    const out = execSync('curl -s http://127.0.0.1:8400/workers', { encoding: 'utf8' });
     const j = JSON.parse(out);
     console.log(`Workers: ${j.count} (${j.idle} idle, ${j.working} working)`);
     j.workers.forEach(w => console.log(`  ${w.name.padEnd(12)} ${w.status.padEnd(8)} ${w.alive ? 'alive' : 'STALE'}`));
