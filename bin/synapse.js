@@ -15,6 +15,7 @@ const VERSION = JSON.parse(readFileSync(join(PKG_ROOT, 'package.json'), 'utf-8')
 
 const COMMANDS = {
   init: 'Scaffold AgentSynapse into your project',
+  ingest: 'Ingest a markdown doc into AWM as canonical memories',
   start: 'Start all services (memory, coordinator, task-manager)',
   stop: 'Stop all running services',
   shutdown: 'Graceful shutdown: broadcast SHUTDOWN to agents, then stop services',
@@ -55,8 +56,8 @@ function isWindows() {
 
 function checkHealth(url) {
   try {
-    execSync(`curl -s --max-time 2 -o /dev/null -w "%{http_code}" ${url}/health`, { encoding: 'utf-8' }).trim();
-    return true;
+    const result = execSync(`curl -4 -s --max-time 2 ${url}/health`, { encoding: 'utf-8' }).trim();
+    return result.includes('"status"');
   } catch {
     return false;
   }
@@ -239,6 +240,189 @@ function cmdInit() {
   log('  3. Launch workers:     npx agent-synapse worker');
   log('');
   log(`  Workspace: "${wsName}" — change default in synapse.workspaces.json`);
+  log('');
+}
+
+// ─── ingest ─────────────────────────────────────────────────────────────────
+
+async function cmdIngest() {
+  const AWM_URL = process.env.AWM_URL || 'http://127.0.0.1:8400';
+  const positionalArgs = args.filter(a => !isFlag(a));
+  const filePath = positionalArgs[0] || null;
+  const workspace = positionalArgs[1] || basename(process.cwd()).toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  const dryRun = args.includes('--dry-run');
+  const agentId = args.find(a => a.startsWith('--agent='))?.split('=')[1] || 'work';
+
+  // Find the markdown file
+  let mdPath;
+  if (filePath) {
+    mdPath = resolve(filePath);
+  } else {
+    // Auto-discover: look for onboarding-memory.md in common locations
+    const candidates = [
+      join(process.cwd(), 'docs', 'onboarding-memory.md'),
+      join(process.cwd(), 'onboarding-memory.md'),
+      join(process.cwd(), 'docs', 'ONBOARDING.md'),
+    ];
+    mdPath = candidates.find(c => existsSync(c));
+  }
+
+  if (!mdPath || !existsSync(mdPath)) {
+    logErr(`No markdown file found. Specify a file path or create docs/onboarding-memory.md`);
+    log('');
+    log('Usage:');
+    log('  npx agent-synapse ingest                          # Auto-discover onboarding doc');
+    log('  npx agent-synapse ingest docs/onboarding-memory.md  # Specific file');
+    log('  npx agent-synapse ingest file.md work --dry-run   # Preview without writing');
+    process.exit(1);
+  }
+
+  header(`Ingesting ${basename(mdPath)} into AWM`);
+  log(`File:      ${mdPath}`);
+  log(`Agent ID:  ${agentId}`);
+  log(`Workspace: ${workspace}`);
+  if (dryRun) log('Mode:      DRY RUN (no writes)');
+  log('');
+
+  // Check AWM is running
+  if (!dryRun && !checkHealth(AWM_URL)) {
+    logErr(`AWM not running at ${AWM_URL}. Start AWM first.`);
+    process.exit(1);
+  }
+
+  // Parse markdown into sections by ## headers
+  const content = readFileSync(mdPath, 'utf-8');
+  const sections = [];
+  const lines = content.split('\n');
+  let currentSection = null;
+
+  for (const line of lines) {
+    // Match ## N. Title or ## Title (not # or ###)
+    const headerMatch = line.match(/^## +(?:\d+\.\s+)?(.+)/);
+    if (headerMatch) {
+      if (currentSection && currentSection.content.trim()) {
+        sections.push(currentSection);
+      }
+      currentSection = {
+        title: headerMatch[1].trim(),
+        content: '',
+      };
+    } else if (currentSection) {
+      currentSection.content += line + '\n';
+    }
+  }
+  if (currentSection && currentSection.content.trim()) {
+    sections.push(currentSection);
+  }
+
+  // Filter out table of contents and other non-content sections
+  const skipTitles = ['table of contents', 'toc', 'contents'];
+  const filtered = sections.filter(s => !skipTitles.includes(s.title.toLowerCase()));
+  sections.length = 0;
+  sections.push(...filtered);
+
+  if (sections.length === 0) {
+    logErr('No ## sections found in the markdown file.');
+    process.exit(1);
+  }
+
+  log(`Found ${sections.length} sections to ingest:`);
+  for (const s of sections) {
+    const wordCount = s.content.trim().split(/\s+/).length;
+    log(`  ${s.title} (${wordCount} words)`);
+  }
+  log('');
+
+  if (dryRun) {
+    logOk(`Dry run complete — ${sections.length} sections would be ingested.`);
+    return;
+  }
+
+  // Ingest each section via AWM HTTP API (memory_write)
+  let ingested = 0;
+  let failed = 0;
+
+  for (const section of sections) {
+    const concept = section.title
+      .replace(/\(.*?\)/g, '')  // Remove parentheticals
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 80);  // AWM concept max ~80 chars
+
+    const body = JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      id: `ingest-${ingested}`,
+      params: {
+        name: 'memory_write',
+        arguments: {
+          concept: concept,
+          content: section.content.trim(),
+          memory_class: 'canonical',
+          memory_type: 'semantic',
+          event_type: 'observation',
+          tags: ['onboarding', workspace],
+        },
+      },
+    });
+
+    try {
+      const result = execSync(
+        `curl -4 -s -X POST ${AWM_URL}/mcp -H "Content-Type: application/json" -d '${body.replace(/'/g, "'\\''")}'`,
+        { encoding: 'utf-8', timeout: 15000 }
+      );
+
+      // Check if the MCP endpoint exists, fall back to direct HTTP
+      if (result.includes('Not found') || result.includes('404') || !result.trim()) {
+        // Fall back: use the memory HTTP API directly if available
+        const directBody = JSON.stringify({
+          concept: concept,
+          content: section.content.trim(),
+          memory_class: 'canonical',
+          memory_type: 'semantic',
+          agent_id: agentId,
+          tags: ['onboarding', workspace],
+        });
+        const directResult = execSync(
+          `curl -4 -s -X POST ${AWM_URL}/memory/write -H "Content-Type: application/json" -d '${directBody.replace(/'/g, "'\\''")}'`,
+          { encoding: 'utf-8', timeout: 15000 }
+        );
+        if (directResult.includes('error') && !directResult.includes('Stored')) {
+          throw new Error(directResult);
+        }
+      }
+
+      logOk(concept);
+      ingested++;
+    } catch (err) {
+      logErr(`${concept}: ${err.message?.slice(0, 100) || 'unknown error'}`);
+      failed++;
+    }
+  }
+
+  log('');
+  if (failed === 0) {
+    logOk(`${ingested}/${sections.length} sections ingested into AWM as canonical memories.`);
+  } else {
+    logErr(`${ingested} ingested, ${failed} failed.`);
+  }
+
+  // Checkpoint after ingest
+  if (ingested > 0) {
+    try {
+      execSync(
+        `curl -4 -s -X POST ${AWM_URL}/mcp -H "Content-Type: application/json" -d '${JSON.stringify({
+          jsonrpc: '2.0', method: 'tools/call', id: 'checkpoint',
+          params: { name: 'memory_checkpoint', arguments: {} }
+        })}'`,
+        { encoding: 'utf-8', timeout: 10000 }
+      );
+      logOk('AWM checkpoint saved.');
+    } catch {
+      // Non-fatal
+    }
+  }
+
   log('');
 }
 
@@ -618,6 +802,7 @@ function cmdHelp() {
 
   Commands:
     init [dir] [--force]  Scaffold AgentSynapse into a project (--force to update existing)
+    ingest [file] [ws]    Ingest markdown doc into AWM as canonical memories
     start                 Start all services (memory, coordinator, task-manager)
     stop                  Stop all running services (services only)
     shutdown [--now]       Graceful shutdown: SHUTDOWN agents, wait, then stop services
@@ -630,6 +815,9 @@ function cmdHelp() {
     npx agent-synapse init                        # Init in current directory
     npx agent-synapse init ./my-project           # Init in a specific project
     npx agent-synapse init --force                # Update existing install with latest
+    npx agent-synapse ingest                      # Ingest docs/onboarding-memory.md into AWM
+    npx agent-synapse ingest docs/my-doc.md work  # Ingest specific file for workspace
+    npx agent-synapse ingest --dry-run             # Preview sections without writing
     npx agent-synapse start                       # Start services
     npx agent-synapse worker                      # Auto-named worker (Worker-A)
     npx agent-synapse worker Worker-B             # Named worker
@@ -653,6 +841,9 @@ function cmdHelp() {
 switch (command) {
   case 'init':
     cmdInit();
+    break;
+  case 'ingest':
+    cmdIngest();
     break;
   case 'start':
     cmdStart();

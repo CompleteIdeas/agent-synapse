@@ -601,6 +601,17 @@ memory_write:
 
 All cross-agent writes MUST use `memory_class: canonical` to bypass the salience filter and ensure other agents can recall them. Without this, AWM's salience scoring may discard shared context (score floor 0.7 for canonical vs default ~0.17 threshold). Every `memory_write` with a `shared` tag must include `memory_class: canonical`.
 
+### Keep AWM Fresh (CRITICAL)
+
+AWM must reflect CURRENT state, not historical snapshots. When you recall a memory and then observe reality differs:
+- **Stale infrastructure info** (ports, URLs, credentials, DB schema versions) → `memory_supersede` immediately
+- **Outdated status** (task done, feature built, bug fixed since memory was written) → `memory_supersede`
+- **Wrong facts** (memory says X but code/DB/service shows Y) → `memory_supersede`
+- **Useful recall** → call `memory_feedback` with useful=true to reinforce it
+- **Useless/wrong recall** → call `memory_feedback` with useful=false + `memory_supersede` or `memory_retract`
+
+Every agent that reads AWM should get accurate, current information. If you touch a topic and AWM is stale on it, fix it before moving on.
+
 ### Tag Conventions
 
 All cross-agent memories MUST use the `shared` tag. Additional tags:

@@ -155,6 +155,14 @@ Read the results. They may contain:
 - Blockers or constraints you need to respect
 - Patterns or conventions to follow
 
+**MANDATORY FRESHNESS CHECK** — After recalling memories, verify any factual claims before acting on them:
+- If a memory says "DB is at schema X" → check the actual DB state
+- If a memory says "file X exists at path Y" → verify the file exists
+- If a memory says "service X is on port Y" → check if it's running
+- If a memory says "feature X is not built" → check if it's been built since
+- **When reality differs from memory → immediately call `memory_supersede(oldMemoryId, correctedContent)`**
+- **When a recalled memory is accurate and helpful → call `memory_feedback` with useful=true**
+
 Also:
 - Read any spec/requirement docs referenced by the task
 - Run `git log --oneline -10` for recent context
@@ -211,6 +219,13 @@ memory_write:
 **All cross-agent writes MUST use `memory_class: canonical`** to bypass the salience filter and ensure other agents can recall them. Without this, AWM's salience scoring may discard shared context (score floor 0.7 for canonical vs default ~0.17 threshold).
 
 **Do NOT wait until task end to write.** Write as you discover. Other workers may need this context mid-task.
+
+**KEEP AWM FRESH — When you observe something newer than what AWM has:**
+- Read a file and it differs from what a memory says → `memory_supersede` with current state
+- Query a DB and the schema/data differs → `memory_supersede`
+- Check a service and it's on a different port/state → `memory_supersede`
+- Complete a task that changes the state described in a memory → `memory_supersede`
+- AWM should always reflect CURRENT truth. If you touch it and it's stale, fix it.
 
 ### Mid-Task Pulse (Every 60 Seconds During Active Work)
 
