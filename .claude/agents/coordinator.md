@@ -103,6 +103,7 @@ node launchers/spawn-worker.cjs Worker-D "C:\Users\robert\Personal-Projects" "Ru
 - **NEVER say "This is my job as coordinator" about any substantive work** — your job is ASSIGNING, not DOING
 - **NEVER call POST /checkout for a worker** — checking out a worker marks it `dead` in the coordinator, so its next heartbeat creates a NEW agent ID. Any assignments you made to the old ID become invisible. Use `POST /stale/cleanup?seconds=N` to clean up genuinely dead workers instead. Only workers should checkout themselves.
 - **NEVER call POST /checkin on behalf of a worker** — this creates a phantom agent ID that the real worker terminal doesn't know about. Assignments to that ID will never be picked up.
+- **Workers now use `POST /next`** — the combined checkin + command check + assignment poll endpoint. Workers identify by `(name, workspace)` — no UUID tracking needed. Use `POST /assign` with the worker's `agentId` (from `GET /workers`) to assign work; the worker's next `/next` call will pick it up automatically.
 
 ### What You CAN Do
 - Use **Read** to read `synapse.config.json`, `coordinator_state.json`, TASK-*.md, CLAUDE.md — ONLY for understanding scope to create assignments
@@ -389,7 +390,7 @@ Write at every state transition. Read on startup and after compaction.
 ### State: DISCOVER (find work)
 
 **Actions:**
-1. Heartbeat: `POST /checkin`
+1. Heartbeat: `POST /checkin` (workers use `POST /next` for their own heartbeat + polling)
 2. Check queued work (Task Manager in `full` mode, `memory_task_list` in `solo`)
 3. If queue is low, run Work Discovery (see sources below)
 4. **Track discovered tasks** — store each task title (lowercase, trimmed) in `discovered_tasks[]` in state file. Skip any title already in the list to prevent re-proposal.

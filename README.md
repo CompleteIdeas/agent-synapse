@@ -111,11 +111,12 @@ Real-time coordination via REST API:
 
 | Endpoint | Purpose |
 |----------|---------|
-| `POST /checkin` | Agent registers/heartbeats |
+| **`POST /next`** | **Combined checkin + command check + assignment poll (preferred)** |
+| `POST /checkin` | Agent registers/heartbeats (use `/next` instead for polling) |
 | `POST /checkout` | Agent signs off |
 | `GET /workers` | List available workers (filter by status) |
 | `POST /assign` | Create a task (workers claim it) |
-| `GET /assignment` | Worker checks for assigned work |
+| `GET /assignment` | Worker checks for assigned work (supports `?name=X&workspace=Y` fallback) |
 | `POST /assignment/:id/claim` | Worker claims a pending task |
 | `PATCH /assignment/:id` | Update assignment status |
 | `POST /lock` | Lock a file for editing |

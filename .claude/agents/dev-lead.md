@@ -86,35 +86,26 @@ Flow: User → Coordinator → Dev Lead (scope) → Coordinator → Workers (exe
 
 ## MANDATORY — First Action
 
-### 1. Check in
+### 1. Check in and Get Assignment (Single Call)
 
 ```bash
-curl -s -X POST http://127.0.0.1:8400/checkin \
+curl -s -X POST http://127.0.0.1:8400/next \
   -H "Content-Type: application/json" \
-  -d '{"name":"Dev-Lead","role":"worker","pid":$$}'
+  -d '{"name":"Dev-Lead","role":"dev-lead","workspace":"PERSONAL"}'
 ```
 
-Save the returned `agentId`.
+The `/next` endpoint does checkin + command check + assignment poll in one call. It returns:
+- `agentId` — save this for assignment-update and finding calls
+- `command` — if active, obey BUILD_FREEZE, PAUSE, SHUTDOWN as any worker would
+- `assignment` — your work, if any
 
-### 2. Check commands
-
-```bash
-curl -s http://127.0.0.1:8400/command
-```
-
-Obey BUILD_FREEZE, PAUSE, SHUTDOWN as any worker would.
-
-### 3. Restore memory
+### 2. Restore memory
 
 - Call `memory_restore`
 - Call `memory_task_begin` with "Dev-Lead session"
 - Call `memory_recall` for project context: `"project decisions blockers current status"`
 
-### 4. Get assignment
-
-```bash
-curl -s "http://127.0.0.1:8400/assignment?agentId=AGENT_ID"
-```
+### 3. Check assignment from /next response
 
 If no assignment, enter idle poll loop. **Each poll iteration MUST be a separate Bash tool call** (NOT a bash for-loop) so you can read the response and break out when an assignment arrives.
 
@@ -122,17 +113,17 @@ If no assignment, enter idle poll loop. **Each poll iteration MUST be a separate
 
 ```bash
 # One iteration per Bash call — use appropriate delay from backoff schedule
-sleep DELAY && curl -s -X POST http://127.0.0.1:8400/checkin -H "Content-Type: application/json" -d '{"name":"Dev-Lead","role":"worker"}' && curl -s http://127.0.0.1:8400/command && curl -s "http://127.0.0.1:8400/assignment?agentId=AGENT_ID"
+sleep DELAY && curl -s -X POST http://127.0.0.1:8400/next -H "Content-Type: application/json" -d '{"name":"Dev-Lead","role":"dev-lead","workspace":"PERSONAL"}'
 ```
 
 **Do NOT output anything during idle polling.** Only output on state transitions.
 If assignment is not null → reset poll count to 0, do the work. If null → increment count, poll again.
 
-### 5. Do the research
+### 4. Do the research
 
 Read extensively. Use subagents for parallel exploration if needed. Be thorough — the quality of your task breakdown determines how well workers execute.
 
-### 6. Report back
+### 5. Report back
 
 ```bash
 curl -s -X PATCH http://127.0.0.1:8400/assignment/ASSIGNMENT_ID \
@@ -148,7 +139,7 @@ memory_write:
   tags: ["shared", "scoping", "dev-lead"]
 ```
 
-### 7. Loop for more work
+### 6. Loop for more work
 
 Reset idle poll count to 0. Go back to idle poll with fresh backoff. The coordinator may assign you another scoping task. After 20 idle polls → enter PARKED state.
 
@@ -158,7 +149,8 @@ Reset idle poll count to 0. Go back to idle poll with fresh backoff. The coordin
 
 | Method | Endpoint | Body / Query | Purpose |
 |--------|----------|-------------|---------|
-| POST | `/checkin` | `{"name":"Dev-Lead","role":"worker","pid":$$}` | Register or heartbeat |
+| **POST** | **`/next`** | `{"name":"Dev-Lead","role":"dev-lead","workspace":"PERSONAL"}` | **Combined checkin + command check + assignment poll (preferred)** |
+| POST | `/checkin` | `{"name":"Dev-Lead","role":"dev-lead","pid":$$}` | Register or heartbeat (use /next instead for polling) |
 | POST | `/checkout` | `{"agentId":"UUID"}` | Sign off (end session) |
 | GET | `/assignment?agentId=UUID` | — | Get your current assignment |
 | PATCH | `/assignment/:id` | `{"status":"completed","result":"..."}` | Report completion |

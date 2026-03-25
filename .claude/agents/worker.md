@@ -34,9 +34,10 @@ The hive runs two services:
 
 | Method | Endpoint | Body / Query | Purpose |
 |--------|----------|-------------|---------|
-| POST | `/checkin` | `{"name":"Worker-B","role":"worker","pid":$$,"capabilities":["code","research"]}` | Register or heartbeat |
+| **POST** | **`/next`** | `{"name":"Worker-B","role":"worker","workspace":"PERSONAL"}` | **Combined checkin + command check + assignment poll (preferred)** |
+| POST | `/checkin` | `{"name":"Worker-B","role":"worker","pid":$$,"capabilities":["code","research"]}` | Register or heartbeat (use /next instead for polling) |
 | POST | `/checkout` | `{"agentId":"UUID"}` | Sign off (end session) |
-| GET | `/assignment?agentId=UUID` | — | Get your current assignment (use `agentId` from checkin response) |
+| GET | `/assignment?agentId=UUID` | — | Get your current assignment |
 | PATCH | `/assignment/:id` | `{"status":"completed","result":"summary"}` | Update assignment status |
 | POST | `/assignment/:id/claim` | `{"agentId":"UUID"}` | Claim a pending assignment |
 | POST | `/lock` | `{"agentId":"UUID","filePath":"rel/path","reason":"..."}` | Lock a file before editing |
@@ -58,33 +59,31 @@ A `SessionEnd` hook (`hooks/worker-cleanup.sh`) automatically runs when your ses
 
 **Do NOT read files, write code, or make plans until you complete this checkin sequence.**
 
-### 1. Check in with the Coordinator
+### 1. Check in and Get Assignment (Single Call)
 
-Your worker name is set by the launcher (`$WORKER_NAME`):
+Your worker name is set by the launcher (`$WORKER_NAME`), workspace by `$WORKSPACE`.
 
 ```bash
-curl -s -X POST http://127.0.0.1:8400/checkin \
+curl -s -X POST http://127.0.0.1:8400/next \
   -H "Content-Type: application/json" \
-  -d "{\"name\":\"$WORKER_NAME\",\"role\":\"worker\",\"pid\":$$}"
+  -d "{\"name\":\"$WORKER_NAME\",\"role\":\"worker\",\"workspace\":\"$WORKSPACE\"}"
 ```
 
 If `$WORKER_NAME` is not set, ask the user what your worker name is.
 
-Save the returned `agentId`. If connection error: **"Coordinator not running. Start the coordinator first."**
+The `/next` endpoint does checkin + command check + assignment poll in one call. It returns:
+- `agentId` — save this for lock/unlock/finding/assignment-update calls
+- `command` — if active, obey it (see below)
+- `assignment` — your work, if any
 
-### 2. Check for Active Commands
+If connection error: **"Coordinator not running. Start the coordinator first."**
 
-```bash
-curl -s http://127.0.0.1:8400/command
-```
-
-If `active: true`:
+**If `command` is active:**
 - **BUILD_FREEZE** → Do not start work. Commit, release locks, heartbeat idle. Wait.
 - **PAUSE** → Do not start work. Wait.
 - **SHUTDOWN** → Commit, release locks, write AWM summary, checkout, exit.
-- **No active command** → Proceed normally.
 
-### 3. Restore Memory and Recall Context
+### 2. Restore Memory and Recall Context
 
 - Call `memory_restore` to recover context from previous sessions
 - Call `memory_task_begin` with your worker name
@@ -95,13 +94,9 @@ memory_recall: "project decisions blockers current status"
 ```
 This surfaces decisions other workers/coordinator have written. Read the results — they may contain constraints, patterns, or warnings that affect your task.
 
-### 4. Get Your Assignment
+### 3. Check Assignment from /next Response
 
-```bash
-curl -s "http://127.0.0.1:8400/assignment?agentId=AGENT_ID"
-```
-
-- If `"assignment": { ... }` with a `"task"` field → you have work. Continue to step 5.
+- If `"assignment": { ... }` with a `"task"` field → you have work. Continue to step 4.
 - If `"assignment": null` → **enter the idle poll loop.**
 
 #### Idle Poll Loop (MANDATORY when no assignment)
@@ -120,13 +115,13 @@ Track your idle poll count (starting at 0). Use this delay schedule:
 
 **Each iteration (one Bash call) — use the appropriate sleep time:**
 ```bash
-sleep DELAY && curl -s -X POST http://127.0.0.1:8400/checkin -H "Content-Type: application/json" -d '{"name":"YOUR_WORKER_NAME","role":"worker"}' && curl -s http://127.0.0.1:8400/command && curl -s "http://127.0.0.1:8400/assignment?agentId=AGENT_ID"
+sleep DELAY && curl -s -X POST http://127.0.0.1:8400/next -H "Content-Type: application/json" -d '{"name":"YOUR_WORKER_NAME","role":"worker","workspace":"YOUR_WORKSPACE"}'
 ```
 
 **After each call, READ the output:**
 - If command has `SHUTDOWN` → follow shutdown protocol
 - If command has `BUILD_FREEZE` or `PAUSE` → wait
-- If assignment is NOT null → **you have work — reset poll count to 0, continue to step 5**
+- If assignment is NOT null → **you have work — reset poll count to 0, continue to step 4**
 - If assignment is null → **increment poll count, check if PARK threshold reached, otherwise poll again**
 
 **Do NOT output anything during idle polling.** No status messages, no "still waiting", no summaries. Just the silent Bash call. Only output on state transitions (got work, got command, entering PARKED).
@@ -150,7 +145,7 @@ After 20 idle polls with no assignment (~15 minutes with backoff), enter PARKED 
 - **RIGHT:** One Bash call per iteration, read output, decide next action
 - **Reset backoff** whenever you receive an assignment or complete a task
 
-### 5. Read Your Assignment and Adapt
+### 4. Read Your Assignment and Adapt
 
 Your assignment's `task` and `description` fields tell you what to do. Adapt:
 
@@ -176,7 +171,7 @@ Also:
 - Read any spec/requirement docs referenced by the task
 - Run `git log --oneline -10` for recent context
 
-### 6. Lock Files and Begin
+### 5. Lock Files and Begin
 
 ```bash
 curl -s -X POST http://127.0.0.1:8400/lock \
@@ -241,9 +236,9 @@ curl -s -X PATCH http://127.0.0.1:8400/pulse \
 ### Command Polling (Every 5-10 Minutes)
 
 ```bash
-curl -s -X POST http://127.0.0.1:8400/checkin -H "Content-Type: application/json" -d "{\"name\":\"$WORKER_NAME\",\"role\":\"worker\"}"
-curl -s http://127.0.0.1:8400/command
+curl -s -X POST http://127.0.0.1:8400/next -H "Content-Type: application/json" -d "{\"name\":\"$WORKER_NAME\",\"role\":\"worker\",\"workspace\":\"$WORKSPACE\"}"
 ```
+Check the `command` field in the response.
 
 **If BUILD_FREEZE or SHUTDOWN is active, stop immediately.**
 

@@ -46,7 +46,8 @@ const scriptPath = path.join(tmpDir, `spawn-${workerName.toLowerCase()}.bat`);
 const systemPrompt = [
   `YOUR IDENTITY: You are ${workerName}.`,
   `Display [${workerName}] at the start of every response.`,
-  `WORKER_NAME=${workerName}.`,
+  `WORKER_NAME=${workerName} for all checkin calls.`,
+  `WORKSPACE=${workspaceName}.`,
   `PROJECT DIRECTORY: ${projectDir}.`,
   `You were spawned by the coordinator for a SPECIFIC TASK.`,
   `Complete it thoroughly, then report results by updating the assignment status via the coordination API on AWM (port 8400).`,
@@ -56,6 +57,7 @@ const systemPrompt = [
 let bat = '@echo off\r\n';
 bat += `cd /d "${synapseDir}"\r\n`;
 bat += `set WORKER_NAME=${workerName}\r\n`;
+bat += `set WORKSPACE=${workspaceName}\r\n`;
 bat += `set PROJECT_DIR=${projectDir}\r\n`;
 bat += `claude --dangerously-skip-permissions --agent worker --append-system-prompt "${systemPrompt}" "${task.replace(/"/g, '""')}"\r\n`;
 
