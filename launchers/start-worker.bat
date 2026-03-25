@@ -10,13 +10,22 @@ if not "%~2"=="" set PROJECT_DIR=%~2
 if not defined WORKER_NAME set WORKER_NAME=Worker-A
 if not defined PROJECT_DIR set PROJECT_DIR=%cd%
 
+:: Derive WORKSPACE from PROJECT_DIR if not set by caller
+if not defined WORKSPACE (
+    echo %PROJECT_DIR% | findstr /i "Personal-Projects" >nul && set WORKSPACE=PERSONAL
+)
+if not defined WORKSPACE (
+    echo %PROJECT_DIR% | findstr /i "\\project" >nul && set WORKSPACE=WORK
+)
+if not defined WORKSPACE set WORKSPACE=DEFAULT
+
 :: DO NOT cd away from AgentSynapse — agent definitions live here
 :: The PROJECT_DIR is passed to Claude via system prompt
 
-:: Check coordinator is running
+:: Check AWM is running
 curl -s http://127.0.0.1:8400/health >nul 2>&1
 if %errorlevel% neq 0 (
-    echo  ERROR: Coordinator not running!
+    echo  ERROR: AWM not running on port 8400!
     pause
     exit /b 1
 )
@@ -24,7 +33,7 @@ if %errorlevel% neq 0 (
 :: Handle coordinator
 if /i "%WORKER_NAME%"=="coordinator" (
     title HIVE: Coordinator
-    claude --dangerously-skip-permissions --agent coordinator --append-system-prompt "YOUR IDENTITY: You are the COORDINATOR. Display [COORDINATOR] at the start of every response. You manage the hive. NEVER use the Agent tool. NEVER spawn subagents. Check GET /workers to see who is online before assigning work. PROJECT DIRECTORY: %PROJECT_DIR%\launchers\.." "Execute hive protocol: read synapse.config.json for mode and services, checkin to coordinator, memory_restore. Then WAIT for workers - poll GET /workers every 10 seconds until at least 2 workers show alive:true (up to 60s). Only after workers are online, report the hive status and ask me what to assign."
+    claude --dangerously-skip-permissions --agent coordinator --append-system-prompt "YOUR IDENTITY: You are the COORDINATOR. Display [COORDINATOR] at the start of every response. You manage the hive. NEVER use the Agent tool. NEVER spawn subagents. WORKER_NAME=coordinator. WORKSPACE=%WORKSPACE%. PROJECT DIRECTORY: %PROJECT_DIR%." "Execute hive protocol: read synapse.config.json for mode and services, checkin to coordinator, memory_restore. Check GET /workers to see who is online. Report hive status and ask what to assign. If no workers online, queue work as pending — workers auto-claim via /next when launched."
     exit /b 0
 )
 
@@ -32,10 +41,10 @@ if /i "%WORKER_NAME%"=="coordinator" (
 if /i "%WORKER_NAME%"=="dev-lead" (
     title HIVE: Dev-Lead
     set WORKER_NAME=Dev-Lead
-    claude --dangerously-skip-permissions --agent dev-lead --append-system-prompt "YOUR IDENTITY: You are the DEV-LEAD. Display [DEV-LEAD] at the start of every response. WORKER_NAME=Dev-Lead. PROJECT DIRECTORY: %PROJECT_DIR%. CRITICAL: After EVERY completed task or response, you MUST immediately poll for new assignments. NEVER stop. Use /loop 2m to auto-poll if available, otherwise manually checkin and check assignments after each action." "Begin hive protocol: checkin, check commands, poll for assignments. After completing any work, IMMEDIATELY poll again. Never park or stop — keep working."
+    claude --dangerously-skip-permissions --agent dev-lead --append-system-prompt "YOUR IDENTITY: You are the DEV-LEAD. Display [DEV-LEAD] at the start of every response. WORKER_NAME=Dev-Lead. WORKSPACE=%WORKSPACE%. PROJECT DIRECTORY: %PROJECT_DIR%." "Begin hive protocol: follow your agent definition exactly. Checkin, memory_restore, recall context, work assignments, poll for more between tasks."
     exit /b 0
 )
 
 :: Handle generic worker
 title HIVE: %WORKER_NAME%
-claude --dangerously-skip-permissions --agent worker --append-system-prompt "YOUR IDENTITY: You are %WORKER_NAME%. Display [%WORKER_NAME%] at the start of every response. WORKER_NAME=%WORKER_NAME% for all checkin calls. PROJECT DIRECTORY: %PROJECT_DIR%. CRITICAL: After EVERY completed task or response, you MUST immediately poll for new assignments. NEVER stop. Use /loop 2m to auto-poll if available, otherwise manually checkin and check assignments after each action." "Begin hive protocol: checkin, check commands, poll for assignments. After completing any work, IMMEDIATELY poll again. Never park or stop — keep working."
+claude --dangerously-skip-permissions --agent worker --append-system-prompt "YOUR IDENTITY: You are %WORKER_NAME%. Display [%WORKER_NAME%] at the start of every response. WORKER_NAME=%WORKER_NAME%. WORKSPACE=%WORKSPACE%. PROJECT DIRECTORY: %PROJECT_DIR%." "Begin hive protocol: follow your agent definition exactly. Checkin, memory_restore, recall context, work assignments, poll for more between tasks. Sync with AWM during idle."

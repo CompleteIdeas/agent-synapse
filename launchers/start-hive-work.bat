@@ -9,6 +9,7 @@ echo.
 
 set LAUNCHER_DIR=%~dp0
 set PROJECT_DIR=C:\Users\robert\project
+set WORKSPACE=WORK
 
 echo  Project: %PROJECT_DIR%
 echo.
