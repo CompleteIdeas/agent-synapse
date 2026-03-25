@@ -86,7 +86,11 @@ Flow: User → Coordinator → Dev Lead (scope) → Coordinator → Workers (exe
 
 ## MANDATORY — First Action
 
-### 1. Check in and Get Assignment (Single Call)
+> **⚠ CRITICAL:** Step 1 is an HTTP curl call, NOT an MCP memory operation. `memory_restore` does NOT register you with the coordinator. You MUST run the curl command below FIRST or you will be invisible to the hive.
+
+### 1. Check in and Get Assignment (Single Call) — HTTP, NOT MCP
+
+**Run this curl command before any MCP/memory operations:**
 
 ```bash
 curl -s -X POST http://127.0.0.1:8400/next \
@@ -122,6 +126,14 @@ sleep 30 && curl -s -X POST http://127.0.0.1:8400/next -H "Content-Type: applica
 ### 4. Do the research
 
 Read extensively. Use subagents for parallel exploration if needed. Be thorough — the quality of your task breakdown determines how well workers execute.
+
+### Mid-Task Pulse
+
+During active research, send `PATCH /pulse` with your `agentId` every ~60 seconds to prevent stale detection. Pulse is cheap — no event rows, just a timestamp update. Fire one after each significant tool call if it's been >60s since your last coordinator contact.
+
+```bash
+curl -s -X PATCH http://127.0.0.1:8400/pulse -H "Content-Type: application/json" -d '{"agentId":"YOUR_AGENT_ID"}'
+```
 
 ### 5. Report back
 
