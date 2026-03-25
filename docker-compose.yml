@@ -1,16 +1,18 @@
-## AWM (memory) runs externally — see AgentWorkingMemory project.
-## Start it separately: cd AgentWorkingMemory && npx tsx src/index.ts
+## AWM serves both memory and coordination on port 8400.
+## The legacy packages/coordinator (port 8410) is DEPRECATED — do not use.
 
 services:
-  coordinator:
-    build: packages/coordinator
-    ports: ["127.0.0.1:8410:8410"]
+  awm:
+    build: packages/awm
+    ports: ["127.0.0.1:8400:8400"]
     volumes: ["./data:/data"]
     environment:
-      COORD_DB: /data/coord.db
+      AWM_DB_PATH: /data/memory.db
+      AWM_COORDINATION: "true"
+      AWM_PORT: "8400"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8410/health"]
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8400/health"]
       interval: 30s
       timeout: 5s
       start_period: 10s
