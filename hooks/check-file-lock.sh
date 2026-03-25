@@ -1,103 +1,88 @@
 #!/bin/bash
 # PreToolUse hook: Block Edit/Write on files locked by another agent
-# Uses coordination.db file_locks table
+# Queries AWM coordination API (port 8400) for file locks
 #
 # Behavior:
 #   - If no locks exist on the file → allow (exit 0)
 #   - If the file is locked by the SAME agent → allow (exit 0)
 #   - If the file is locked by a DIFFERENT agent → deny with message
-#   - If coordination.db doesn't exist → allow (single-agent mode)
+#   - If AWM is not running → allow (single-agent mode)
+
+COORDINATOR="${COORD_URL:-http://127.0.0.1:8400}"
 
 INPUT=$(cat)
 
-# Extract file_path and agent_type from tool input JSON
-# Uses sed — works on Windows Git Bash without jq or grep -P
+# Extract file_path from tool input JSON
 FILE_PATH=$(echo "$INPUT" | sed -n 's/.*"file_path"\s*:\s*"\([^"]*\)".*/\1/p' | head -1)
-AGENT_TYPE=$(echo "$INPUT" | sed -n 's/.*"agent_type"\s*:\s*"\([^"]*\)".*/\1/p' | head -1)
 
 # No file path → not our concern
 if [ -z "$FILE_PATH" ]; then
   exit 0
 fi
 
-# Resolve DB path — look for coordination.db in project root
-# The hook is at <project>/.claude/hooks/check-file-lock.sh
-# The DB is at <project>/coordination.db (created by the coordinator service)
-SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-DB="$SCRIPT_DIR/coordination.db"
+# Normalize: backslashes to forward slashes, strip drive prefix for relative comparison
+NORMALIZED=$(echo "$FILE_PATH" | sed 's|\\|/|g')
 
-# Also check if coordinator stores it elsewhere
-if [ ! -f "$DB" ]; then
-  # Try the project root (two levels up from hooks/)
-  PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-  DB="$PROJECT_ROOT/coordination.db"
-fi
-
-# No coordination DB → single-agent mode, allow everything
-if [ ! -f "$DB" ]; then
+# Query AWM coordination API for locks
+LOCKS_JSON=$(curl -s --max-time 2 "$COORDINATOR/locks" 2>/dev/null)
+if [ -z "$LOCKS_JSON" ] || [ "$LOCKS_JSON" = "" ]; then
+  # AWM not running or no response → allow (single-agent mode)
   exit 0
 fi
 
-# Check if sqlite3 is available
-if ! command -v sqlite3 &>/dev/null; then
-  exit 0
-fi
+# Check if any lock matches our file (using python for reliable JSON parsing)
+RESULT=$(python -c "
+import json, sys, os
+try:
+    data = json.loads('''$LOCKS_JSON''')
+    locks = data.get('locks', [])
+    if not locks:
+        sys.exit(0)
 
-# Normalize file path: convert backslashes to forward slashes
-NORMALIZED_PATH=$(echo "$FILE_PATH" | sed 's|\\|/|g')
+    # Normalize the target path
+    target = '$NORMALIZED'.replace('\\\\', '/').lower()
+    # Also try just the filename and relative portions
+    target_parts = target.split('/')
 
-# Try to make it relative to the project root
-# Strip common absolute path prefixes to get a relative path
-REL_PATH="$NORMALIZED_PATH"
-# Strip Windows-style absolute path (C:/Users/.../project-name/)
-REL_PATH=$(echo "$REL_PATH" | sed 's|^[A-Za-z]:/[^/]*/[^/]*/[^/]*/[^/]*/||')
-# Strip POSIX-style absolute path (/c/Users/.../project-name/)
-REL_PATH=$(echo "$REL_PATH" | sed 's|^/[a-z]/[^/]*/[^/]*/[^/]*/[^/]*/||')
-# Strip any leading slash
-REL_PATH=$(echo "$REL_PATH" | sed 's|^/||')
+    worker = os.environ.get('WORKER_NAME', '')
 
-# Check for locks on this file (try both absolute and relative paths)
-LOCK_INFO=$(sqlite3 "$DB" "SELECT locked_by, task_id, reason FROM file_locks WHERE file_path = '$REL_PATH' OR file_path = '$NORMALIZED_PATH' OR file_path = '$FILE_PATH' LIMIT 1;" 2>/dev/null)
+    for lock in locks:
+        lp = lock.get('file_path', '').replace('\\\\', '/').lower()
+        # Match if paths end the same way or are equal
+        if target.endswith(lp) or lp.endswith(target) or target == lp:
+            agent_name = lock.get('agent_name', lock.get('agent_id', 'unknown'))
+            if worker and agent_name == worker:
+                # We hold this lock — allow
+                print('SELF')
+                sys.exit(0)
+            reason = lock.get('reason', 'no reason given')
+            print(f'LOCKED|{agent_name}|{reason}')
+            sys.exit(0)
+    # No matching lock
+    print('NONE')
+except Exception as e:
+    print(f'ERROR|{e}', file=sys.stderr)
+    print('NONE')
+" 2>/dev/null)
 
-# No lock → allow
-if [ -z "$LOCK_INFO" ]; then
-  exit 0
-fi
-
-# Parse lock info (sqlite3 returns pipe-separated by default)
-LOCKED_BY=$(echo "$LOCK_INFO" | cut -d'|' -f1)
-LOCK_TASK=$(echo "$LOCK_INFO" | cut -d'|' -f2)
-LOCK_REASON=$(echo "$LOCK_INFO" | cut -d'|' -f3)
-
-# If we know our agent type, check if WE hold the lock
-if [ -n "$AGENT_TYPE" ]; then
-  if [ "$AGENT_TYPE" = "$LOCKED_BY" ]; then
+case "$RESULT" in
+  NONE|SELF|"")
     exit 0
-  fi
-fi
-
-# Check WORKER_NAME env var (set by launcher)
-if [ -n "$WORKER_NAME" ]; then
-  if [ "$WORKER_NAME" = "$LOCKED_BY" ]; then
-    exit 0
-  fi
-fi
-
-# Check if there are ANY active agents (if no agents checked in recently, locks may be stale)
-ACTIVE_AGENTS=$(sqlite3 "$DB" "SELECT COUNT(*) FROM agents WHERE last_seen > datetime('now', '-10 minutes');" 2>/dev/null)
-if [ "$ACTIVE_AGENTS" = "0" ] || [ -z "$ACTIVE_AGENTS" ]; then
-  # No recently active agents → locks are stale, allow the edit
-  exit 0
-fi
-
-# File is locked by someone else — deny
-cat <<ENDJSON
+    ;;
+  LOCKED*)
+    LOCKED_BY=$(echo "$RESULT" | cut -d'|' -f2)
+    LOCK_REASON=$(echo "$RESULT" | cut -d'|' -f3)
+    cat <<ENDJSON
 {
   "hookSpecificOutput": {
     "hookEventName": "PreToolUse",
     "permissionDecision": "deny",
-    "permissionDecisionReason": "FILE LOCKED: '$REL_PATH' is locked by agent '$LOCKED_BY' (task #$LOCK_TASK: $LOCK_REASON). Either wait for them to finish, or release the lock via the coordinator API: DELETE /lock"
+    "permissionDecisionReason": "FILE LOCKED: '$FILE_PATH' is locked by '$LOCKED_BY' ($LOCK_REASON). Wait for them to finish, or release via: DELETE /lock on port 8400."
   }
 }
 ENDJSON
+    exit 0
+    ;;
+esac
+
 exit 0

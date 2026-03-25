@@ -46,12 +46,10 @@ const scriptPath = path.join(tmpDir, `spawn-${workerName.toLowerCase()}.bat`);
 const systemPrompt = [
   `YOUR IDENTITY: You are ${workerName}.`,
   `Display [${workerName}] at the start of every response.`,
-  `WORKER_NAME=${workerName} for all checkin calls.`,
-  `WORKSPACE=${workspaceName}.`,
+  `WORKER_NAME=${workerName}. WORKSPACE=${workspaceName}.`,
   `PROJECT DIRECTORY: ${projectDir}.`,
-  `You were spawned by the coordinator for a SPECIFIC TASK.`,
-  `Complete it thoroughly, then report results by updating the assignment status via the coordination API on AWM (port 8400).`,
-  `When done, checkin as idle and say TASK COMPLETE with a summary.`,
+  `You were spawned for a SPECIFIC TASK.`,
+  `Follow your agent protocol: checkin via POST /next, memory_restore, recall context, work on assignment, chain tasks until queue empty, then stop cleanly.`,
 ].join(' ');
 
 let bat = '@echo off\r\n';
