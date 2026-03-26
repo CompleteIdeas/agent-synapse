@@ -20,6 +20,12 @@
     "events": ["/events", "/timeline"],
     "monitoring": ["/status", "/stats", "/metrics", "/health/deep", "/stale"]
   },
+  "models": {
+    "_doc": "Default Claude model per agent role. Launchers read this to pass --model to claude CLI. Override per-agent in synapse.workspaces.json.",
+    "coordinator": "opus",
+    "dev-lead": "opus",
+    "worker": "sonnet"
+  },
   "stale_threshold_seconds": 120,
   "stale_auto_cleanup": true,
   "loop": {

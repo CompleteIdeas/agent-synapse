@@ -6,6 +6,18 @@
  *   node launch-hive.js personal    — launches personal workspace hive
  *   node launch-hive.js work        — launches work workspace hive
  *   node launch-hive.js             — interactive menu
+ *
+ * Model overrides:
+ *   Each agent can have a "model" field in synapse.workspaces.json (per-agent)
+ *   or fall back to role defaults in synapse.config.json "models" section.
+ *   The model is passed to start-worker.bat via AGENT_MODEL env var.
+ *
+ * --bare flag (Claude Code v2.1.81+):
+ *   Use --bare for scripted -p calls that skip hooks/LSP/plugins/skills.
+ *   Faster execution for non-interactive single-prompt invocations.
+ *   NOT used for hive agents (they need hooks for file-lock checking, compaction, etc).
+ *   Use case: coordinator spawning quick one-shot queries like:
+ *     claude --bare -p "Summarize this file"
  */
 
 const { execSync, spawn } = require('child_process');
@@ -14,6 +26,13 @@ const path = require('path');
 const fs = require('fs');
 
 const SYNAPSE_DIR = path.resolve(__dirname, '..');
+
+// Load model defaults from synapse.config.json
+let MODEL_DEFAULTS = {};
+try {
+  const mainConfig = JSON.parse(fs.readFileSync(path.join(SYNAPSE_DIR, 'synapse.config.json'), 'utf8'));
+  MODEL_DEFAULTS = mainConfig.models || {};
+} catch { /* use empty defaults */ }
 
 function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -131,9 +150,12 @@ function launchHive(workspace) {
   const agentSynapseDir = SYNAPSE_DIR;
   const agentScripts = ws.agents.map(agent => {
     const scriptPath = path.join(tmpDir, `launch-${agent.name.toLowerCase()}.bat`);
+    // Resolve model: per-agent override > role default from synapse.config.json > none
+    const model = agent.model || MODEL_DEFAULTS[agent.role] || '';
     let content = '@echo off\r\n';
     content += `set WORKER_NAME=${agent.name}\r\n`;
     content += `set PROJECT_DIR=${ws.projectDir}\r\n`;
+    if (model) content += `set AGENT_MODEL=${model}\r\n`;
     content += `cd /d "${agentSynapseDir}"\r\n`;
     if (agent.delay > 0) content += `timeout /t ${agent.delay} /nobreak >nul\r\n`;
     content += `call "${workerBat}" ${agent.name} "${ws.projectDir}"\r\n`;
