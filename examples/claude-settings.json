@@ -1,6 +1,41 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "_comment": "AgentSynapse hook configuration — copy to .claude/settings.json in your project",
+  "permissions": {
+    "allow": [
+      "Bash(git:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
+      "Bash(curl:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(rm:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(mkdir:*)",
+      "Bash(du:*)",
+      "Bash(file:*)",
+      "Bash(xxd:*)",
+      "Bash(cmd:*)",
+      "Bash(wt:*)",
+      "Bash(tasklist:*)",
+      "Bash(where:*)",
+      "Bash(python:*)",
+      "Bash(start:*)",
+      "Bash(timeout:*)",
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch"
+    ],
+    "defaultMode": "bypassPermissions"
+  },
   "hooks": {
     "PreToolUse": [
       {
@@ -8,7 +43,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/check-file-lock.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/hooks/check-file-lock.sh\"",
             "timeout": 5
           }
         ]
@@ -18,7 +53,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/check-file-lock.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/hooks/check-file-lock.sh\"",
             "timeout": 5
           }
         ]
@@ -48,6 +83,18 @@
         ]
       }
     ],
+    "PostCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/hooks/post-compact.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "matcher": "",
@@ -56,6 +103,42 @@
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/hooks/worker-cleanup.sh\"",
             "timeout": 10
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/hooks/stop-failure.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "CwdChanged": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/hooks/cwd-changed.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "FileChanged": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/hooks/file-changed.sh\"",
+            "timeout": 5
           }
         ]
       }

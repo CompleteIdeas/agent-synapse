@@ -5,6 +5,13 @@
  *
  * Opens a new Windows Terminal tab in the existing hive WT window.
  * The worker does the job and stays open for inspection.
+ *
+ * Model override: Reads role defaults from synapse.config.json "models" section.
+ * Spawned workers use the "worker" role default (sonnet) unless overridden.
+ *
+ * --bare flag: Used here because spawned workers are single-task invocations
+ * that skip hooks/LSP/plugins for faster startup. Hive-launched agents
+ * (via start-worker.bat) do NOT use --bare since they need hooks.
  */
 
 const { spawn, execSync } = require('child_process');
@@ -41,6 +48,13 @@ try {
 } catch { /* config read failed — use default */ }
 const wtWindowName = `AgentSynapse-${workspaceName}`;
 
+// Load model default for worker role from synapse.config.json
+let agentModel = '';
+try {
+  const mainConfig = JSON.parse(fs.readFileSync(path.join(synapseDir, 'synapse.config.json'), 'utf8'));
+  agentModel = (mainConfig.models && mainConfig.models.worker) || '';
+} catch { /* no config — skip model flag */ }
+
 // Write temp launcher script
 const scriptPath = path.join(tmpDir, `spawn-${workerName.toLowerCase()}.bat`);
 const systemPrompt = [
@@ -52,12 +66,15 @@ const systemPrompt = [
   `Follow your agent protocol: checkin via POST /next, memory_restore, recall context, work on assignment, chain tasks until queue empty, then stop cleanly.`,
 ].join(' ');
 
+const modelFlag = agentModel ? ` --model ${agentModel}` : '';
+
 let bat = '@echo off\r\n';
 bat += `cd /d "${synapseDir}"\r\n`;
 bat += `set WORKER_NAME=${workerName}\r\n`;
 bat += `set WORKSPACE=${workspaceName}\r\n`;
 bat += `set PROJECT_DIR=${projectDir}\r\n`;
-bat += `claude --bare --dangerously-skip-permissions --agent worker --append-system-prompt "${systemPrompt}" "${task.replace(/"/g, '""')}"\r\n`;
+if (agentModel) bat += `set AGENT_MODEL=${agentModel}\r\n`;
+bat += `claude --bare --dangerously-skip-permissions${modelFlag} --agent worker --append-system-prompt "${systemPrompt}" "${task.replace(/"/g, '""')}"\r\n`;
 
 fs.writeFileSync(scriptPath, bat);
 

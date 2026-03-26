@@ -1,6 +1,16 @@
 @echo off
 :: Usage: start-worker.bat [worker-name] [project-dir]
 :: Must be run from AgentSynapse directory (where .claude/agents/ lives)
+::
+:: Environment variables (set by launch-hive.cjs):
+::   WORKER_NAME   — Agent name (Worker-A, Dev-Lead, coordinator)
+::   PROJECT_DIR   — Target project directory
+::   WORKSPACE     — Workspace name (PERSONAL, WORK)
+::   AGENT_MODEL   — Claude model override (opus, sonnet). If set, passes --model to claude CLI.
+::
+:: --bare flag note: Do NOT use --bare for hive agents — they need hooks
+:: (file-lock checking, pre-compact, session-end cleanup). --bare is only
+:: for scripted one-shot -p calls via spawn-worker.cjs.
 
 :: Get args
 if not "%~1"=="" set WORKER_NAME=%~1
@@ -30,10 +40,14 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
+:: Build --model flag if AGENT_MODEL is set (set by launch-hive.cjs from synapse.config.json)
+set MODEL_FLAG=
+if defined AGENT_MODEL set MODEL_FLAG=--model %AGENT_MODEL%
+
 :: Handle coordinator
 if /i "%WORKER_NAME%"=="coordinator" (
     title HIVE: Coordinator
-    claude --dangerously-skip-permissions --agent coordinator --append-system-prompt "YOUR IDENTITY: You are the COORDINATOR. Display [COORDINATOR] at the start of every response. You manage the hive. NEVER use the Agent tool. NEVER spawn subagents. WORKER_NAME=coordinator. WORKSPACE=%WORKSPACE%. PROJECT DIRECTORY: %PROJECT_DIR%." "Execute hive protocol: read synapse.config.json for mode and services, checkin to coordinator, memory_restore. Check GET /workers to see who is online. Report hive status and ask what to assign. If no workers online, queue work as pending — workers auto-claim via /next when launched."
+    claude --dangerously-skip-permissions %MODEL_FLAG% --agent coordinator --append-system-prompt "YOUR IDENTITY: You are the COORDINATOR. Display [COORDINATOR] at the start of every response. You manage the hive. NEVER use the Agent tool. NEVER spawn subagents. WORKER_NAME=coordinator. WORKSPACE=%WORKSPACE%. PROJECT DIRECTORY: %PROJECT_DIR%." "Execute hive protocol: read synapse.config.json for mode and services, checkin to coordinator, memory_restore. Check GET /workers to see who is online. Report hive status and ask what to assign. If no workers online, queue work as pending — workers auto-claim via /next when launched."
     exit /b 0
 )
 
@@ -41,10 +55,10 @@ if /i "%WORKER_NAME%"=="coordinator" (
 if /i "%WORKER_NAME%"=="dev-lead" (
     title HIVE: Dev-Lead
     set WORKER_NAME=Dev-Lead
-    claude --dangerously-skip-permissions --agent dev-lead --append-system-prompt "YOUR IDENTITY: You are the DEV-LEAD. Display [DEV-LEAD] at the start of every response. WORKER_NAME=Dev-Lead. WORKSPACE=%WORKSPACE%. PROJECT DIRECTORY: %PROJECT_DIR%." "Begin hive protocol: follow your agent definition exactly. FIRST: run curl POST /next to http://127.0.0.1:8400/next with your name, role, and workspace to register with the coordinator (this is an HTTP call, NOT an MCP memory operation). THEN: memory_restore, recall context, check assignment from /next response, work assignments, poll for more between tasks."
+    claude --dangerously-skip-permissions %MODEL_FLAG% --agent dev-lead --append-system-prompt "YOUR IDENTITY: You are the DEV-LEAD. Display [DEV-LEAD] at the start of every response. WORKER_NAME=Dev-Lead. WORKSPACE=%WORKSPACE%. PROJECT DIRECTORY: %PROJECT_DIR%." "Begin hive protocol: follow your agent definition exactly. FIRST: run curl POST /next to http://127.0.0.1:8400/next with your name, role, and workspace to register with the coordinator (this is an HTTP call, NOT an MCP memory operation). THEN: memory_restore, recall context, check assignment from /next response, work assignments, poll for more between tasks."
     exit /b 0
 )
 
 :: Handle generic worker
 title HIVE: %WORKER_NAME%
-claude --dangerously-skip-permissions --agent worker --append-system-prompt "YOUR IDENTITY: You are %WORKER_NAME%. Display [%WORKER_NAME%] at the start of every response. WORKER_NAME=%WORKER_NAME%. WORKSPACE=%WORKSPACE%. PROJECT DIRECTORY: %PROJECT_DIR%." "Begin hive protocol: follow your agent definition exactly. FIRST: run curl POST /next to http://127.0.0.1:8400/next with your name, role, and workspace to register with the coordinator (this is an HTTP call, NOT an MCP memory operation). THEN: memory_restore, recall context, check assignment from /next response, work assignments, poll for more between tasks. Sync with AWM during idle."
+claude --dangerously-skip-permissions %MODEL_FLAG% --agent worker --append-system-prompt "YOUR IDENTITY: You are %WORKER_NAME%. Display [%WORKER_NAME%] at the start of every response. WORKER_NAME=%WORKER_NAME%. WORKSPACE=%WORKSPACE%. PROJECT DIRECTORY: %PROJECT_DIR%." "Begin hive protocol: follow your agent definition exactly. FIRST: run curl POST /next to http://127.0.0.1:8400/next with your name, role, and workspace to register with the coordinator (this is an HTTP call, NOT an MCP memory operation). THEN: memory_restore, recall context, check assignment from /next response, work assignments, poll for more between tasks. Sync with AWM during idle."
