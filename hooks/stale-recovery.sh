@@ -9,14 +9,36 @@
 #   3. Marks them as dead
 #
 # Usage:
-#   bash hooks/stale-recovery.sh              # default 5-minute threshold
+#   bash hooks/stale-recovery.sh              # default threshold from config
 #   bash hooks/stale-recovery.sh 300          # custom threshold in seconds
+#   SYNAPSE_STALE_THRESHOLD=180 bash hooks/stale-recovery.sh
 #   COORD_URL=http://host:8400 bash hooks/stale-recovery.sh
 #
+# Threshold priority: CLI arg > SYNAPSE_STALE_THRESHOLD env > synapse.config.json > 120s default
 # Safe to run repeatedly — idempotent.
 
 COORDINATOR="${COORD_URL:-http://127.0.0.1:8400}"
-STALE_THRESHOLD_SECS="${1:-300}"  # default: 5 minutes
+
+# Resolve stale threshold: CLI arg > env var > synapse.config.json > default 120s
+if [ -n "$1" ]; then
+  STALE_THRESHOLD_SECS="$1"
+elif [ -n "$SYNAPSE_STALE_THRESHOLD" ]; then
+  STALE_THRESHOLD_SECS="$SYNAPSE_STALE_THRESHOLD"
+else
+  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+  CONFIG_FILE="$(cd "$SCRIPT_DIR/.." && pwd)/synapse.config.json"
+  if [ -f "$CONFIG_FILE" ]; then
+    STALE_THRESHOLD_SECS=$(python -c "
+import json
+try:
+    c = json.load(open('$CONFIG_FILE'))
+    print(c.get('stale_threshold_seconds', 120))
+except:
+    print(120)
+" 2>/dev/null)
+  fi
+  STALE_THRESHOLD_SECS="${STALE_THRESHOLD_SECS:-120}"
+fi
 
 # Get all workers
 WORKERS=$(curl -s --max-time 5 "$COORDINATOR/workers" 2>/dev/null)

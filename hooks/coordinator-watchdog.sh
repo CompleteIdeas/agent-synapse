@@ -64,4 +64,9 @@ if [ "$ELAPSED" -gt 300 ]; then
 ENDJSON
 fi
 
+# Run stale recovery automatically on each coordinator Notification event.
+# This detects workers that disconnected without checkout and recovers their tasks.
+# The script is idempotent and lightweight — safe to run on every tick.
+bash "$SCRIPT_DIR/stale-recovery.sh" >/dev/null 2>&1 &
+
 exit 0
