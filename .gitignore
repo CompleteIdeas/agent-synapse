@@ -29,6 +29,8 @@ Thumbs.db
 # Runtime state
 coordinator_state.json
 .compact-breadcrumb-*.json
+.worker-state-*.json
+.compact-recovery-*.signal
 
 # User-specific workspace config (copy synapse.workspaces.example.json)
 synapse.workspaces.json

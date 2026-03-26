@@ -129,16 +129,25 @@ This surfaces decisions other workers/coordinator have written. Read the results
 
 > **⚠ THIS LOOP IS MANDATORY, NOT OPTIONAL.** You MUST keep polling until you get work, a SHUTDOWN command, or 30 minutes elapse. Do NOT break out of this loop to ask the user what to do. Do NOT say "standing by" or "ready for work" or "what would you like me to work on?" — the coordinator assigns work, not the user. Your ONLY job when idle is to KEEP POLLING SILENTLY.
 
+**Exponential backoff polling** — reduces coordinator load when many workers idle:
+
+| Poll range | Interval | Cumulative time |
+|------------|----------|-----------------|
+| Polls 1–4 | 15 seconds | ~1 min |
+| Polls 5–14 | 30 seconds | ~6 min |
+| Polls 15+ | 60 seconds | 6 min onward |
+
 **Each poll iteration is ONE Bash call with `run_in_background: true`:**
 ```bash
-sleep 30 && curl -s -X POST http://127.0.0.1:8400/next -H "Content-Type: application/json" -d '{"name":"$WORKER_NAME","role":"worker","workspace":"$WORKSPACE"}'
+sleep $INTERVAL && curl -s -X POST http://127.0.0.1:8400/next -H "Content-Type: application/json" -d '{"name":"$WORKER_NAME","role":"worker","workspace":"$WORKSPACE"}'
 ```
+Where `$INTERVAL` follows the backoff table above (15 for first 4 polls, 30 for next 10, then 60).
 
 **When the background call completes, read the output and act:**
-- If `assignment` is NOT null → you have work. Continue to step 4.
+- If `assignment` is NOT null → you have work. **Reset poll count to 0.** Continue to step 4.
 - If `command` has `SHUTDOWN` → follow shutdown protocol
 - If `command` has `BUILD_FREEZE` or `PAUSE` → obey, wait for RESUME
-- If `assignment` is null → **immediately issue the next poll call** (same sleep 30 + curl, run_in_background). Do NOT stop. Do NOT ask the user. Do NOT output anything. Just poll again.
+- If `assignment` is null → **immediately issue the next poll call** with the appropriate backoff interval. Do NOT stop. Do NOT ask the user. Do NOT output anything. Just poll again.
 
 **AWM sync during idle (every 2-3 poll cycles):**
 ```
@@ -153,10 +162,10 @@ Read the results — other agents may have written context that affects you. Thi
 
 If you catch yourself about to type "No assignment yet" or "Want me to do something?" — STOP. Issue another poll instead. The coordinator will assign work when it's ready.
 
-**After 15 minutes with no assignment (~30 polls):**
+**After 15 minutes with no assignment (~20 polls):**
 1. Write `memory_checkpoint` with your current state
 2. Output: **"Worker $WORKER_NAME — idle 15 min, no assignments. Still polling."**
-3. Continue polling at 60s intervals (slower pace, still online)
+3. Continue polling at 60s intervals (already at slowest pace)
 
 **After 30 minutes total:**
 1. Call `memory_task_end` with "No work after 30 min — stopping"
@@ -375,10 +384,30 @@ This contains your assignment, agent ID, and locked files — saved automaticall
 1. Commit any pending work
 2. Release all locks
 3. Write AWM outcome summary + `memory_task_end`
-4. Check out:
+4. **Write state breadcrumb** for graceful restart:
+   ```bash
+   cat > .worker-state-$WORKER_NAME.json <<STATE
+   {
+     "worker": "$WORKER_NAME",
+     "agentId": "YOUR_AGENT_ID",
+     "assignmentId": "LAST_ASSIGNMENT_ID_OR_NULL",
+     "lockedFiles": [],
+     "lastCommitSha": "$(git rev-parse HEAD 2>/dev/null)",
+     "shutdownAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+     "clean": true
+   }
+   STATE
+   ```
+   On restart, check for this file before registering:
+   ```bash
+   cat .worker-state-$WORKER_NAME.json 2>/dev/null
+   ```
+   If it exists and `"clean": true`, you had a graceful shutdown — no recovery needed.
+   If it exists and `"clean": false`, you crashed mid-task — check the assignmentId and resume.
+5. Check out:
    ```bash
    curl -s -X POST http://127.0.0.1:8400/checkout \
      -H "Content-Type: application/json" \
      -d '{"agentId":"YOUR_AGENT_ID"}'
    ```
-5. Tell the user: **"Worker $WORKER_NAME signed off."**
+6. Tell the user: **"Worker $WORKER_NAME signed off."**
