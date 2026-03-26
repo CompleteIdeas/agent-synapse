@@ -41,10 +41,10 @@ if /i "%WORKER_NAME%"=="coordinator" (
 if /i "%WORKER_NAME%"=="dev-lead" (
     title HIVE: Dev-Lead
     set WORKER_NAME=Dev-Lead
-    claude --dangerously-skip-permissions --agent dev-lead --append-system-prompt "YOUR IDENTITY: You are the DEV-LEAD. Display [DEV-LEAD] at the start of every response. WORKER_NAME=Dev-Lead. WORKSPACE=%WORKSPACE%. PROJECT DIRECTORY: %PROJECT_DIR%." "Begin hive protocol: follow your agent definition exactly. Checkin, memory_restore, recall context, work assignments, poll for more between tasks."
+    claude --dangerously-skip-permissions --agent dev-lead --append-system-prompt "YOUR IDENTITY: You are the DEV-LEAD. Display [DEV-LEAD] at the start of every response. WORKER_NAME=Dev-Lead. WORKSPACE=%WORKSPACE%. PROJECT DIRECTORY: %PROJECT_DIR%." "Begin hive protocol: follow your agent definition exactly. FIRST: run curl POST /next to http://127.0.0.1:8400/next with your name, role, and workspace to register with the coordinator (this is an HTTP call, NOT an MCP memory operation). THEN: memory_restore, recall context, check assignment from /next response, work assignments, poll for more between tasks."
     exit /b 0
 )
 
 :: Handle generic worker
 title HIVE: %WORKER_NAME%
-claude --dangerously-skip-permissions --agent worker --append-system-prompt "YOUR IDENTITY: You are %WORKER_NAME%. Display [%WORKER_NAME%] at the start of every response. WORKER_NAME=%WORKER_NAME%. WORKSPACE=%WORKSPACE%. PROJECT DIRECTORY: %PROJECT_DIR%." "Begin hive protocol: follow your agent definition exactly. Checkin, memory_restore, recall context, work assignments, poll for more between tasks. Sync with AWM during idle."
+claude --dangerously-skip-permissions --agent worker --append-system-prompt "YOUR IDENTITY: You are %WORKER_NAME%. Display [%WORKER_NAME%] at the start of every response. WORKER_NAME=%WORKER_NAME%. WORKSPACE=%WORKSPACE%. PROJECT DIRECTORY: %PROJECT_DIR%." "Begin hive protocol: follow your agent definition exactly. FIRST: run curl POST /next to http://127.0.0.1:8400/next with your name, role, and workspace to register with the coordinator (this is an HTTP call, NOT an MCP memory operation). THEN: memory_restore, recall context, check assignment from /next response, work assignments, poll for more between tasks. Sync with AWM during idle."

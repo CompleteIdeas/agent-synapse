@@ -59,9 +59,15 @@ A `SessionEnd` hook (`hooks/worker-cleanup.sh`) automatically runs when your ses
 
 **Do NOT read files, write code, or make plans until you complete this checkin sequence.**
 
-### 1. Check in and Get Assignment (Single Call)
+> **⚠ CRITICAL DISTINCTION:** There are TWO separate systems you must connect to on startup:
+> 1. **Coordinator (HTTP)** — `POST /next` via curl to `http://127.0.0.1:8400`. This registers you as online. Without this, the coordinator cannot see you and cannot assign you work.
+> 2. **AWM (MCP)** — `memory_restore`, `memory_recall`, etc. This recovers your cognitive context from previous sessions.
+>
+> **`memory_restore` does NOT register you with the coordinator.** You MUST do the HTTP curl call FIRST. If you skip it, you are invisible to the hive.
 
-Your worker name is set by the launcher (`$WORKER_NAME`), workspace by `$WORKSPACE`.
+### 1. Check in and Get Assignment (Single Call) — HTTP, NOT MCP
+
+Your worker name is set by the launcher (`$WORKER_NAME`), workspace by `$WORKSPACE`. **Run this curl command before any MCP/memory operations:**
 
 ```bash
 curl -s -X POST http://127.0.0.1:8400/next \
