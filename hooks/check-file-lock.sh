@@ -6,7 +6,7 @@
 #   - If no locks exist on the file → allow (exit 0)
 #   - If the file is locked by the SAME agent → allow (exit 0)
 #   - If the file is locked by a DIFFERENT agent → deny with message
-#   - If AWM is not running → allow (single-agent mode)
+#   - If AWM is not running → DENY (fail-closed: retry once, then block)
 
 COORDINATOR="${COORD_URL:-http://127.0.0.1:8400}"
 
@@ -23,11 +23,25 @@ fi
 # Normalize: backslashes to forward slashes, strip drive prefix for relative comparison
 NORMALIZED=$(echo "$FILE_PATH" | sed 's|\\|/|g')
 
-# Query AWM coordination API for locks
+# Query AWM coordination API for locks (fail-closed: retry once on timeout)
 LOCKS_JSON=$(curl -s --max-time 2 "$COORDINATOR/locks" 2>/dev/null)
 if [ -z "$LOCKS_JSON" ] || [ "$LOCKS_JSON" = "" ]; then
-  # AWM not running or no response → allow (single-agent mode)
-  exit 0
+  # Retry once after 1 second
+  sleep 1
+  LOCKS_JSON=$(curl -s --max-time 2 "$COORDINATOR/locks" 2>/dev/null)
+  if [ -z "$LOCKS_JSON" ] || [ "$LOCKS_JSON" = "" ]; then
+    # AWM unreachable after retry → deny (fail-closed to prevent lock violations)
+    cat <<ENDJSON
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "COORDINATOR UNREACHABLE: Cannot verify file locks — AWM at $COORDINATOR is not responding. Edit/Write blocked to prevent lock violations. Start AWM or check connectivity."
+  }
+}
+ENDJSON
+    exit 0
+  fi
 fi
 
 # Check if any lock matches our file (using python for reliable JSON parsing)
