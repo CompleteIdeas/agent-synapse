@@ -9,6 +9,17 @@
     "task_manager": "http://127.0.0.1:8420"
   },
   "_note_coordinator": "Coordinator is now part of AWM (port 8400) when AWM_COORDINATION=true. The separate packages/coordinator/ is deprecated.",
+  "coordination_endpoints": {
+    "_doc": "See packages/awm/docs/coordination-api.md for full reference",
+    "agents": ["/checkin", "/checkout", "/pulse", "/next", "/workers", "/agent/:id"],
+    "assignments": ["/assign", "/assignment", "/assignment/:id", "/assignments", "/reassign"],
+    "locks": ["/lock", "/locks"],
+    "commands": ["/command", "/command/:id", "/command/wait"],
+    "findings": ["/finding", "/findings", "/findings/summary"],
+    "decisions": ["/decisions"],
+    "events": ["/events", "/timeline"],
+    "monitoring": ["/status", "/stats", "/metrics", "/health/deep", "/stale"]
+  },
   "stale_threshold_seconds": 120,
   "stale_auto_cleanup": true,
   "loop": {

@@ -37,9 +37,12 @@ The hive runs two services:
 | **POST** | **`/next`** | `{"name":"Worker-B","role":"worker","workspace":"PERSONAL"}` | **Combined checkin + command check + assignment poll (preferred)** |
 | POST | `/checkin` | `{"name":"Worker-B","role":"worker","pid":$$,"capabilities":["code","research"]}` | Register or heartbeat (use /next instead for polling) |
 | POST | `/checkout` | `{"agentId":"UUID"}` | Sign off (end session) |
-| GET | `/assignment?agentId=UUID` | — | Get your current assignment |
+| GET | `/assignment?agentId=UUID` | — | Get your current assignment (includes `context` JSON field) |
+| GET | `/assignments` | `?status=completed&limit=20&offset=0&agent_id=UUID` | List assignments with filters and pagination |
 | PATCH | `/assignment/:id` | `{"status":"completed","result":"summary"}` | Update assignment status |
 | POST | `/assignment/:id/claim` | `{"agentId":"UUID"}` | Claim a pending assignment |
+| POST | `/assign` | `{"agentId":"UUID","task":"...","context":"{...}"}` | Create and assign a task (rejects 409 if agent busy) |
+| POST | `/reassign` | `{"assignmentId":"UUID","targetAgentId":"UUID"}` | Reassign a task to another agent (or to pending) |
 | POST | `/lock` | `{"agentId":"UUID","filePath":"rel/path","reason":"..."}` | Lock a file before editing |
 | DELETE | `/lock` | `{"agentId":"UUID","filePath":"rel/path"}` | Release a file lock |
 | GET | `/locks` | — | List all active locks |
@@ -48,8 +51,18 @@ The hive runs two services:
 | GET | `/status` | — | Full dashboard (agents, assignments, locks, stats) |
 | POST | `/finding` | `{"agentId":"UUID","category":"...","severity":"...","description":"..."}` | Report a finding |
 | GET | `/findings?limit=N` | — | List findings |
+| PATCH | `/finding/:id` | `{"status":"resolved","suggestion":"..."}` | Update a finding's status |
+| POST | `/decisions` | `{"agentId":"UUID","summary":"...","tags":"..."}` | Record a decision |
+| GET | `/decisions` | `?since_id=0&limit=20` | List decisions (changefeed) |
+| GET | `/events` | `?since_id=0&agent_id=UUID&event_type=...&limit=50` | Event changefeed for decision propagation |
+| GET | `/timeline` | `?limit=50&since=ISO_TIMESTAMP` | Enriched activity timeline with agent names |
+| GET | `/agent/:id` | — | Individual agent details with assignment and locks |
+| DELETE | `/agent/:id` | — | Kill agent: fail tasks, release locks, mark dead |
+| GET | `/stats` | — | Aggregate stats (workers, tasks, decisions, uptime) |
+| GET | `/metrics` | — | Prometheus-style metrics |
 | PATCH | `/pulse` | `{"agentId":"UUID"}` | Lightweight heartbeat — updates lastSeen without creating event rows |
 | GET | `/health` | — | Health check |
+| GET | `/health/deep` | — | Deep health: DB integrity, stale agents, pending tasks |
 
 ## Automatic Cleanup
 
@@ -59,9 +72,15 @@ A `SessionEnd` hook (`hooks/worker-cleanup.sh`) automatically runs when your ses
 
 **Do NOT read files, write code, or make plans until you complete this checkin sequence.**
 
-### 1. Check in and Get Assignment (Single Call)
+> **⚠ CRITICAL DISTINCTION:** There are TWO separate systems you must connect to on startup:
+> 1. **Coordinator (HTTP)** — `POST /next` via curl to `http://127.0.0.1:8400`. This registers you as online. Without this, the coordinator cannot see you and cannot assign you work.
+> 2. **AWM (MCP)** — `memory_restore`, `memory_recall`, etc. This recovers your cognitive context from previous sessions.
+>
+> **`memory_restore` does NOT register you with the coordinator.** You MUST do the HTTP curl call FIRST. If you skip it, you are invisible to the hive.
 
-Your worker name is set by the launcher (`$WORKER_NAME`), workspace by `$WORKSPACE`.
+### 1. Check in and Get Assignment (Single Call) — HTTP, NOT MCP
+
+Your worker name is set by the launcher (`$WORKER_NAME`), workspace by `$WORKSPACE`. **Run this curl command before any MCP/memory operations:**
 
 ```bash
 curl -s -X POST http://127.0.0.1:8400/next \
@@ -97,57 +116,45 @@ This surfaces decisions other workers/coordinator have written. Read the results
 ### 3. Check Assignment from /next Response
 
 - If `"assignment": { ... }` with a `"task"` field → you have work. Continue to step 4.
-- If `"assignment": null` → **enter the idle poll loop.**
+- If `"assignment": null` → **enter the idle ready loop.**
 
-#### Idle Poll Loop (MANDATORY when no assignment)
+#### Idle Ready Loop (waiting for coordinator to assign work)
 
-**You MUST poll for work. Do NOT stop and wait for the user.**
+The coordinator may need time to break down tasks, make decisions, or wait for other agents to finish before assigning your next task. Stay online and ready.
 
-**CRITICAL: Each poll iteration MUST be a SEPARATE Bash tool call.** Do NOT combine multiple iterations into a single bash for-loop or while-loop. You need to read the assignment response after each poll so you can break out when work arrives.
-
-##### Exponential Backoff Schedule
-
-Track your idle poll count (starting at 0). Use this delay schedule:
-
-| Polls 1-3 | Polls 4-6 | Polls 7-10 | Polls 11-20 | Polls 21+ |
-|-----------|-----------|------------|-------------|-----------|
-| 30s | 60s | 120s | 300s (5 min) | **PARK** |
-
-**Each iteration (one Bash call) — use the appropriate sleep time:**
+**Each poll iteration is ONE Bash call (not a bash for-loop):**
 ```bash
-sleep DELAY && curl -s -X POST http://127.0.0.1:8400/next -H "Content-Type: application/json" -d '{"name":"YOUR_WORKER_NAME","role":"worker","workspace":"YOUR_WORKSPACE"}'
+sleep 30 && curl -s -X POST http://127.0.0.1:8400/next -H "Content-Type: application/json" -d '{"name":"$WORKER_NAME","role":"worker","workspace":"$WORKSPACE"}'
 ```
 
-**After each call, READ the output:**
-- If command has `SHUTDOWN` → follow shutdown protocol
-- If command has `BUILD_FREEZE` or `PAUSE` → wait
-- If assignment is NOT null → **you have work — reset poll count to 0, continue to step 4**
-- If assignment is null → **increment poll count, check if PARK threshold reached, otherwise poll again**
+**After each call, read the output:**
+- If `assignment` is NOT null → you have work. Continue to step 4.
+- If `command` has `SHUTDOWN` → follow shutdown protocol
+- If `command` has `BUILD_FREEZE` or `PAUSE` → obey, wait for RESUME
+- If `assignment` is null → **sync with AWM, then poll again**
 
-**Do NOT output anything during idle polling.** No status messages, no "still waiting", no summaries. Just the silent Bash call. Only output on state transitions (got work, got command, entering PARKED).
+**AWM sync during idle (every 2-3 poll cycles):**
+```
+memory_recall: "project decisions blockers current status"
+```
+Read the results — other agents may have written context that affects you. This keeps you current on what the hive is doing.
 
-##### PARKED State (after 20 idle polls)
+**Do NOT output during idle polling.** No status messages, no "still waiting." Only output on state transitions (got work, got command, stopping).
 
-After 20 idle polls with no assignment (~15 minutes with backoff), enter PARKED state:
+**After 15 minutes with no assignment (~30 polls):**
+1. Write `memory_checkpoint` with your current state
+2. Output: **"Worker $WORKER_NAME — idle 15 min, no assignments. Standing by."**
+3. Continue polling at 60s intervals (slower pace, still online)
 
-1. Write `memory_checkpoint` with current state
-2. Output exactly: **"PARKED — no work available. Send a message or RESUME command to wake me."**
-3. **Stop polling. Do nothing.** Wait for user input or a command.
-
-**On wake (user message or RESUME command):**
-1. Reset poll count to 0
-2. Checkin to coordinator
-3. Check for assignment
-4. If assignment → work. If not → re-enter idle poll loop from poll count 0.
-
-##### Rules
-- **WRONG:** `for i in $(seq 1 6); do sleep 30; curl ...; done` (bash loop runs blind)
-- **RIGHT:** One Bash call per iteration, read output, decide next action
-- **Reset backoff** whenever you receive an assignment or complete a task
+**After 30 minutes total:**
+1. Call `memory_task_end` with "No work after 30 min — stopping"
+2. `POST /checkout`
+3. Output: **"Worker $WORKER_NAME — no work for 30 min. Stopping. Relaunch when needed."**
+4. STOP.
 
 ### 4. Read Your Assignment and Adapt
 
-Your assignment's `task` and `description` fields tell you what to do. Adapt:
+Your assignment's `task` and `description` fields tell you what to do. If the assignment includes a `context` field (JSON string), parse it for files, references, decisions, and acceptance criteria that inform your work. Adapt:
 
 | If the task says... | You are acting as... | Key behaviors |
 |---------------------|---------------------|---------------|
@@ -166,6 +173,14 @@ Read the results. They may contain:
 - Decisions from other workers affecting your task
 - Blockers or constraints you need to respect
 - Patterns or conventions to follow
+
+**MANDATORY FRESHNESS CHECK** — After recalling memories, verify any factual claims before acting on them:
+- If a memory says "DB is at schema X" → check the actual DB state
+- If a memory says "file X exists at path Y" → verify the file exists
+- If a memory says "service X is on port Y" → check if it's running
+- If a memory says "feature X is not built" → check if it's been built since
+- **When reality differs from memory → immediately call `memory_supersede(oldMemoryId, correctedContent)`**
+- **When a recalled memory is accurate and helpful → call `memory_feedback` with useful=true**
 
 Also:
 - Read any spec/requirement docs referenced by the task
@@ -215,11 +230,21 @@ memory_write:
   concept: "[Worker-A] Auth uses JWT not sessions"
   content: "Decided JWT for auth tokens. Reason: compliance requirement. All auth code should use jwt.verify(), not req.session. Affects: middleware, login route, token refresh."
   tags: ["shared", "decision", "auth"]
+  memory_class: canonical
   event_type: "decision"
   decision_made: true
 ```
 
+**All cross-agent writes MUST use `memory_class: canonical`** to bypass the salience filter and ensure other agents can recall them. Without this, AWM's salience scoring may discard shared context (score floor 0.7 for canonical vs default ~0.17 threshold).
+
 **Do NOT wait until task end to write.** Write as you discover. Other workers may need this context mid-task.
+
+**KEEP AWM FRESH — When you observe something newer than what AWM has:**
+- Read a file and it differs from what a memory says → `memory_supersede` with current state
+- Query a DB and the schema/data differs → `memory_supersede`
+- Check a service and it's on a different port/state → `memory_supersede`
+- Complete a task that changes the state described in a memory → `memory_supersede`
+- AWM should always reflect CURRENT truth. If you touch it and it's stale, fix it.
 
 ### Mid-Task Pulse (Every 60 Seconds During Active Work)
 
@@ -279,24 +304,25 @@ Check the `command` field in the response.
      concept: "[Worker-A] Completed: [task title]"
      content: "What was done: [summary]. Files changed: [list]. Decisions made: [list]. Gotchas for others: [any warnings]."
      tags: ["shared", "outcome", "completed", "component/<name>"]
+     memory_class: canonical
      event_type: "decision"
      decision_made: true
    ```
 6. **Call `memory_task_end`** with summary
-7. **Loop back for more work** — go back to the idle poll loop
+7. **Check for next assignment** — see Task Chaining below
 
-## Work Loop (CRITICAL — YOU MUST DO THIS)
+## Task Chaining (after completing a task)
 
-You are a **persistent worker**. After completing a task:
+After completing a task (steps 1-6 of Task Complete Protocol):
 
-1. Mark assignment completed (PATCH /assignment/:id)
-2. Write AWM outcome summary
-3. **Reset idle poll count to 0**
-4. **Go back to the idle poll loop** with fresh backoff (starts at 30s)
-5. When a new assignment appears → **recall AWM for the new task area**, then work on it
-6. **NEVER exit on your own.** Only SHUTDOWN ends your session.
-7. **NEVER ask "What should I do next?"** — work comes from the coordinator API.
-8. After 20 idle polls → enter **PARKED** state (stop polling, wait for wake signal).
+1. Immediately call `POST /next` again (no sleep, no delay)
+2. If a new assignment exists → recall AWM for the new task area, work on it
+3. If NO assignment → **enter the idle ready loop** (see step 3 above)
+   - The coordinator may be preparing your next task
+   - Other agents may be finishing dependencies
+   - Stay online and poll — work may arrive shortly
+
+You are a **persistent worker** during active sessions. You work, chain tasks, and wait for more. You only stop after 30 minutes of no assignments.
 
 ## API Quick Reference
 
@@ -329,6 +355,9 @@ This contains your assignment, agent ID, and locked files — saved automaticall
 - **Always recall AWM** — at session start AND at each new task start
 - **Obey commands immediately** — BUILD_FREEZE and SHUTDOWN are not optional
 - **Work within scope** — only edit files relevant to your assigned task
+- **Stay online between tasks** — poll for work, sync with AWM, wait for coordinator decisions
+- **NEVER ask "What should I do next?"** — work comes from the coordinator API via /next
+- **Stop after 30 min idle** — not before. The coordinator may need time to assign work
 
 ## SHUTDOWN Protocol
 

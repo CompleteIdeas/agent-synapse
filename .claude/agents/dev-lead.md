@@ -86,7 +86,11 @@ Flow: User → Coordinator → Dev Lead (scope) → Coordinator → Workers (exe
 
 ## MANDATORY — First Action
 
-### 1. Check in and Get Assignment (Single Call)
+> **⚠ CRITICAL:** Step 1 is an HTTP curl call, NOT an MCP memory operation. `memory_restore` does NOT register you with the coordinator. You MUST run the curl command below FIRST or you will be invisible to the hive.
+
+### 1. Check in and Get Assignment (Single Call) — HTTP, NOT MCP
+
+**Run this curl command before any MCP/memory operations:**
 
 ```bash
 curl -s -X POST http://127.0.0.1:8400/next \
@@ -107,21 +111,29 @@ The `/next` endpoint does checkin + command check + assignment poll in one call.
 
 ### 3. Check assignment from /next response
 
-If no assignment, enter idle poll loop. **Each poll iteration MUST be a separate Bash tool call** (NOT a bash for-loop) so you can read the response and break out when an assignment arrives.
+- If assignment exists → do the research (step 4)
+- If command is active (BUILD_FREEZE, SHUTDOWN) → obey it
+- If NO assignment → **enter the idle ready loop:**
 
-**Exponential backoff:** Polls 1-3: 30s, Polls 4-6: 60s, Polls 7-10: 120s, Polls 11-20: 300s. After 20 idle polls → enter **PARKED** state (stop polling, write `memory_checkpoint`, output "PARKED — no work available. Send a message to wake me." and wait for user/RESUME).
-
+**Poll every 30s** with a single Bash call (not a for-loop):
 ```bash
-# One iteration per Bash call — use appropriate delay from backoff schedule
-sleep DELAY && curl -s -X POST http://127.0.0.1:8400/next -H "Content-Type: application/json" -d '{"name":"Dev-Lead","role":"dev-lead","workspace":"PERSONAL"}'
+sleep 30 && curl -s -X POST http://127.0.0.1:8400/next -H "Content-Type: application/json" -d '{"name":"Dev-Lead","role":"dev-lead","workspace":"$WORKSPACE"}'
 ```
-
-**Do NOT output anything during idle polling.** Only output on state transitions.
-If assignment is not null → reset poll count to 0, do the work. If null → increment count, poll again.
+- If assignment arrives → do the research (step 4)
+- Every 2-3 cycles, recall AWM: `memory_recall: "project decisions blockers current status"` — stay current on what the hive is doing
+- After 30 min with no assignment → `memory_task_end`, checkout, output status, STOP
 
 ### 4. Do the research
 
 Read extensively. Use subagents for parallel exploration if needed. Be thorough — the quality of your task breakdown determines how well workers execute.
+
+### Mid-Task Pulse
+
+During active research, send `PATCH /pulse` with your `agentId` every ~60 seconds to prevent stale detection. Pulse is cheap — no event rows, just a timestamp update. Fire one after each significant tool call if it's been >60s since your last coordinator contact.
+
+```bash
+curl -s -X PATCH http://127.0.0.1:8400/pulse -H "Content-Type: application/json" -d '{"agentId":"YOUR_AGENT_ID"}'
+```
 
 ### 5. Report back
 
@@ -131,17 +143,21 @@ curl -s -X PATCH http://127.0.0.1:8400/assignment/ASSIGNMENT_ID \
   -d '{"status":"completed","result":"[your structured output — see format above]"}'
 ```
 
-Also write key findings to AWM (**AWM is a shared global pool** — your writes surface automatically when other agents recall related topics):
+Also write key findings to AWM (**AWM is a shared global pool** — your writes surface automatically when other agents recall related topics). **All cross-agent writes MUST use `memory_class: canonical`** to bypass the salience filter and ensure other agents can recall them:
 ```
 memory_write:
   concept: "[Dev-Lead] Scoping: [topic]"
   content: "[findings summary, task breakdown, business questions]"
   tags: ["shared", "scoping", "dev-lead"]
+  memory_class: canonical
 ```
 
-### 6. Loop for more work
+### 6. Check for Next Assignment
 
-Reset idle poll count to 0. Go back to idle poll with fresh backoff. The coordinator may assign you another scoping task. After 20 idle polls → enter PARKED state.
+After completing a scoping task:
+1. Call `POST /next` immediately (no delay)
+2. If new assignment → do it
+3. If no assignment → enter the idle ready loop (see step 3). The coordinator may be processing your findings and preparing the next scoping task.
 
 ## API Reference — EXACT Endpoints (DO NOT GUESS)
 
