@@ -26,7 +26,7 @@ echo @echo off > "%TMPSCRIPT%"
 echo cd /d "%SYNAPSE_DIR%" >> "%TMPSCRIPT%"
 echo set WORKER_NAME=%WORKER_NAME% >> "%TMPSCRIPT%"
 echo set PROJECT_DIR=%PROJECT_DIR% >> "%TMPSCRIPT%"
-echo claude --dangerously-skip-permissions --agent worker --append-system-prompt "YOUR IDENTITY: You are %WORKER_NAME%. Display [%WORKER_NAME%] at the start of every response. WORKER_NAME=%WORKER_NAME%. PROJECT DIRECTORY: %PROJECT_DIR%. You were spawned by the coordinator for a SPECIFIC TASK. Complete it, report results via POST /findings or POST /assign update, then checkin as idle and wait for further instructions." "%TASK%" >> "%TMPSCRIPT%"
+echo claude --bare --dangerously-skip-permissions --agent worker --append-system-prompt "YOUR IDENTITY: You are %WORKER_NAME%. Display [%WORKER_NAME%] at the start of every response. WORKER_NAME=%WORKER_NAME%. PROJECT DIRECTORY: %PROJECT_DIR%. You were spawned by the coordinator for a SPECIFIC TASK. Complete it, report results via POST /findings or POST /assign update, then checkin as idle and wait for further instructions." "%TASK%" >> "%TMPSCRIPT%"
 
 :: Derive workspace from project dir (must match launch-hive.cjs WORKSPACES)
 set WT_WINDOW=AgentSynapse-PERSONAL

@@ -57,7 +57,7 @@ bat += `cd /d "${synapseDir}"\r\n`;
 bat += `set WORKER_NAME=${workerName}\r\n`;
 bat += `set WORKSPACE=${workspaceName}\r\n`;
 bat += `set PROJECT_DIR=${projectDir}\r\n`;
-bat += `claude --dangerously-skip-permissions --agent worker --append-system-prompt "${systemPrompt}" "${task.replace(/"/g, '""')}"\r\n`;
+bat += `claude --bare --dangerously-skip-permissions --agent worker --append-system-prompt "${systemPrompt}" "${task.replace(/"/g, '""')}"\r\n`;
 
 fs.writeFileSync(scriptPath, bat);
 
