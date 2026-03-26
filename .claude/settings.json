@@ -141,6 +141,18 @@
         ]
       }
     ],
+    "TaskCompleted": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/hooks/task-completed.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "WorktreeCreate": [
       {
         "matcher": "",
