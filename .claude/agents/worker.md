@@ -37,9 +37,12 @@ The hive runs two services:
 | **POST** | **`/next`** | `{"name":"Worker-B","role":"worker","workspace":"PERSONAL"}` | **Combined checkin + command check + assignment poll (preferred)** |
 | POST | `/checkin` | `{"name":"Worker-B","role":"worker","pid":$$,"capabilities":["code","research"]}` | Register or heartbeat (use /next instead for polling) |
 | POST | `/checkout` | `{"agentId":"UUID"}` | Sign off (end session) |
-| GET | `/assignment?agentId=UUID` | — | Get your current assignment |
+| GET | `/assignment?agentId=UUID` | — | Get your current assignment (includes `context` JSON field) |
+| GET | `/assignments` | `?status=completed&limit=20&offset=0&agent_id=UUID` | List assignments with filters and pagination |
 | PATCH | `/assignment/:id` | `{"status":"completed","result":"summary"}` | Update assignment status |
 | POST | `/assignment/:id/claim` | `{"agentId":"UUID"}` | Claim a pending assignment |
+| POST | `/assign` | `{"agentId":"UUID","task":"...","context":"{...}"}` | Create and assign a task (rejects 409 if agent busy) |
+| POST | `/reassign` | `{"assignmentId":"UUID","targetAgentId":"UUID"}` | Reassign a task to another agent (or to pending) |
 | POST | `/lock` | `{"agentId":"UUID","filePath":"rel/path","reason":"..."}` | Lock a file before editing |
 | DELETE | `/lock` | `{"agentId":"UUID","filePath":"rel/path"}` | Release a file lock |
 | GET | `/locks` | — | List all active locks |
@@ -48,8 +51,18 @@ The hive runs two services:
 | GET | `/status` | — | Full dashboard (agents, assignments, locks, stats) |
 | POST | `/finding` | `{"agentId":"UUID","category":"...","severity":"...","description":"..."}` | Report a finding |
 | GET | `/findings?limit=N` | — | List findings |
+| PATCH | `/finding/:id` | `{"status":"resolved","suggestion":"..."}` | Update a finding's status |
+| POST | `/decisions` | `{"agentId":"UUID","summary":"...","tags":"..."}` | Record a decision |
+| GET | `/decisions` | `?since_id=0&limit=20` | List decisions (changefeed) |
+| GET | `/events` | `?since_id=0&agent_id=UUID&event_type=...&limit=50` | Event changefeed for decision propagation |
+| GET | `/timeline` | `?limit=50&since=ISO_TIMESTAMP` | Enriched activity timeline with agent names |
+| GET | `/agent/:id` | — | Individual agent details with assignment and locks |
+| DELETE | `/agent/:id` | — | Kill agent: fail tasks, release locks, mark dead |
+| GET | `/stats` | — | Aggregate stats (workers, tasks, decisions, uptime) |
+| GET | `/metrics` | — | Prometheus-style metrics |
 | PATCH | `/pulse` | `{"agentId":"UUID"}` | Lightweight heartbeat — updates lastSeen without creating event rows |
 | GET | `/health` | — | Health check |
+| GET | `/health/deep` | — | Deep health: DB integrity, stale agents, pending tasks |
 
 ## Automatic Cleanup
 
@@ -141,7 +154,7 @@ Read the results — other agents may have written context that affects you. Thi
 
 ### 4. Read Your Assignment and Adapt
 
-Your assignment's `task` and `description` fields tell you what to do. Adapt:
+Your assignment's `task` and `description` fields tell you what to do. If the assignment includes a `context` field (JSON string), parse it for files, references, decisions, and acceptance criteria that inform your work. Adapt:
 
 | If the task says... | You are acting as... | Key behaviors |
 |---------------------|---------------------|---------------|
