@@ -70,6 +70,10 @@ The hive runs two services:
 | PATCH | `/pulse` | `{"agentId":"UUID"}` | Lightweight heartbeat — updates lastSeen without creating event rows |
 | GET | `/health` | — | Health check |
 | GET | `/health/deep` | — | Deep health: DB integrity, stale agents, pending tasks |
+| POST | `/channel/register` | `{"agentId":"UUID","channelId":"..."}` | Register channel session for push-based coordination |
+| DELETE | `/channel/register` | `{"agentId":"UUID"}` | Deregister channel session |
+| GET | `/channel/sessions` | — | List active channel sessions |
+| POST | `/channel/push` | `{"agentId":"UUID","message":"..."}` | Push message to agent's channel session |
 
 ## Automatic Cleanup
 

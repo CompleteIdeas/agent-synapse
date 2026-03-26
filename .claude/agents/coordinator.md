@@ -718,6 +718,10 @@ curl -s -X POST http://127.0.0.1:8400/command \
 | GET | `/metrics` | Prometheus-format metrics (text/plain) |
 | GET | `/stats` | Worker/task/decision counts and uptime |
 | GET | `/assignments?status=X&limit=N&offset=N` | List assignments with filters and pagination |
+| POST | `/channel/register` | Register channel session `{"agentId":"...","channelId":"..."}` |
+| DELETE | `/channel/register` | Deregister channel session `{"agentId":"..."}` |
+| GET | `/channel/sessions` | List active channel sessions (with agent names) |
+| POST | `/channel/push` | Push message to agent `{"agentId":"...","message":"..."}` |
 
 ### Task Manager (port 8420) — Only in `full` mode
 
@@ -744,6 +748,22 @@ curl -s -X POST http://127.0.0.1:8400/command \
 | GET | `/questions?status=pending` | List open questions |
 | POST | `/questions` | Ask a question |
 | GET | `/health` | Health check |
+
+## Push-Based Coordination (Channel Sessions)
+
+Workers can register a **channel session** so the coordinator can push assignments and messages directly instead of relying on `/next` polling.
+
+**Flow:**
+1. Worker starts and calls `POST /channel/register` with its `agentId` and a `channelId` (MCP channel identifier).
+2. When you `POST /assign` to that worker, the handler automatically checks `coord_channel_sessions`. If the worker is connected, it updates `last_push_at` and `push_count`. The response includes `pushed: true`.
+3. Use `POST /channel/push` to send arbitrary messages to a connected worker (e.g., "BUILD_FREEZE issued", "new context available").
+4. On `POST /checkout`, the worker's channel session is automatically cleaned up.
+5. `GET /channel/sessions` shows all connected workers and their push stats.
+
+**When to use push vs polling:**
+- Push is lower latency and reduces coordinator load — prefer it when workers support channels.
+- Polling (`/next`) is the fallback for workers without channel support or when the MCP channel is unavailable.
+- The coordinator should use both: push when available, and workers still poll as a safety net.
 
 ## API Best Practices
 
