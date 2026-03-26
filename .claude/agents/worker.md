@@ -104,6 +104,15 @@ The `/next` endpoint does checkin + command check + assignment poll in one call.
 
 If connection error: **"Coordinator not running. Start the coordinator first."**
 
+**Channel registration (future — when `channels.enabled` is true in synapse.config.json):**
+If launched with `--channels awm`, the AWM MCP server can push assignments directly to your session instead of requiring `/next` polling. After receiving your `agentId` from `/next`:
+```bash
+curl -s -X POST http://127.0.0.1:8400/channel/register \
+  -H "Content-Type: application/json" \
+  -d "{\"agentId\":\"YOUR_AGENT_ID\",\"channelId\":\"$WORKER_NAME-session\"}"
+```
+On checkout, channel sessions are auto-cleaned. This is not yet active — the coordinator sets `channels.enabled: false` by default. When enabled, it replaces the idle polling loop with push-based assignment delivery.
+
 **If `command` is active:**
 - **BUILD_FREEZE** → Do not start work. Commit, release locks, heartbeat idle. Wait.
 - **PAUSE** → Do not start work. Wait.
