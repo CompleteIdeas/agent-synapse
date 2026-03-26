@@ -109,6 +109,15 @@ The `/next` endpoint does checkin + command check + assignment poll in one call.
 - `command` — if active, obey BUILD_FREEZE, PAUSE, SHUTDOWN as any worker would
 - `assignment` — your work, if any
 
+**Channel registration (future — when `channels.enabled` is true in synapse.config.json):**
+If launched with `--channels awm`, register for push-based assignment delivery after receiving your `agentId`:
+```bash
+curl -s -X POST http://127.0.0.1:8400/channel/register \
+  -H "Content-Type: application/json" \
+  -d "{\"agentId\":\"YOUR_AGENT_ID\",\"channelId\":\"Dev-Lead-session\"}"
+```
+Channel sessions are auto-cleaned on checkout. Not yet active — polling remains the default.
+
 ### 2. Restore memory
 
 - Call `memory_restore`
@@ -187,6 +196,10 @@ After completing a scoping task:
 | POST | `/finding` | `{"agentId":"UUID","category":"...","severity":"...","description":"..."}` | Report a finding |
 | PATCH | `/pulse` | `{"agentId":"UUID"}` | Lightweight heartbeat — updates lastSeen, no event row |
 | GET | `/health` | — | Health check |
+| POST | `/channel/register` | `{"agentId":"UUID","channelId":"..."}` | Register channel session for push-based coordination |
+| DELETE | `/channel/register` | `{"agentId":"UUID"}` | Deregister channel session |
+| GET | `/channel/sessions` | — | List active channel sessions |
+| POST | `/channel/push` | `{"agentId":"UUID","message":"..."}` | Push message to agent's channel session |
 
 ## SHUTDOWN Protocol
 

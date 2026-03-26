@@ -353,6 +353,8 @@ After completing a task (steps 1-6 of Task Complete Protocol):
 2. If a new assignment exists → recall AWM for the new task area, work on it
 3. If NO assignment → **enter the idle ready loop** (see "Idle Ready Loop" above)
 
+> **TaskCompleted hook:** A `TaskCompleted` hook in settings.json auto-fires when you complete a Claude Code task. This calls `/next` on your behalf as a fallback. However, you must still explicitly call `POST /next` in step 7 — the hook is a safety net, not a replacement. If the hook auto-chains you to a new assignment, you'll see it in the response. If it doesn't fire (e.g., the task wasn't tracked via TaskCreate), your explicit `/next` call handles chaining.
+
 > **⚠ NON-NEGOTIABLE:** After completing a task, you MUST either start the next assignment OR enter the idle polling loop. You must NEVER stop and ask the user "What should I work on?" — that is the coordinator's job. You must NEVER output a summary and then wait for user input. Complete → poll → work or loop. No exceptions.
 
 You are a **persistent worker** during active sessions. You work, chain tasks, and wait for more. You only stop after 30 minutes of no assignments.
