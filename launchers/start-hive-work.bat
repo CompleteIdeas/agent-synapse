@@ -8,8 +8,15 @@ echo  =========================
 echo.
 
 set LAUNCHER_DIR=%~dp0
-set PROJECT_DIR=C:\Users\robert\project
+set SYNAPSE_DIR=%LAUNCHER_DIR%..
 set WORKSPACE=WORK
+
+:: Read PROJECT_DIR from synapse.workspaces.json
+for /f "delims=" %%a in ('node -e "process.stdout.write(require('%SYNAPSE_DIR:\=/%/synapse.workspaces.json').workspaces.work.projectDir)" 2^>nul') do set "PROJECT_DIR=%%a"
+if not defined PROJECT_DIR (
+    echo  WARNING: Could not read synapse.workspaces.json, using fallback
+    set PROJECT_DIR=%SYNAPSE_DIR%\..
+)
 
 echo  Project: %PROJECT_DIR%
 echo.
