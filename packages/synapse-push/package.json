@@ -1,0 +1,24 @@
+{
+  "name": "synapse-push",
+  "version": "0.1.0",
+  "description": "Push-based coordination adapter for AgentSynapse — bridges AWM assignment events to MCP channel push",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "agent-synapse",
+    "push",
+    "coordination",
+    "mcp",
+    "channels"
+  ],
+  "author": "Robert Gregg",
+  "license": "MIT"
+}

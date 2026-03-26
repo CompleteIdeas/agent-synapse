@@ -7,7 +7,8 @@
     "packages/awm",
     "packages/coordinator",
     "packages/task-manager",
-    "packages/memory-client"
+    "packages/memory-client",
+    "packages/synapse-push"
   ],
   "bin": {
     "agent-synapse": "bin/synapse.js"
