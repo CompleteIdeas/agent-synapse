@@ -27,11 +27,13 @@ const fs = require('fs');
 
 const SYNAPSE_DIR = path.resolve(__dirname, '..');
 
-// Load model defaults from synapse.config.json
+// Load config from synapse.config.json
 let MODEL_DEFAULTS = {};
+let CHANNELS_ENABLED = false;
 try {
   const mainConfig = JSON.parse(fs.readFileSync(path.join(SYNAPSE_DIR, 'synapse.config.json'), 'utf8'));
   MODEL_DEFAULTS = mainConfig.models || {};
+  CHANNELS_ENABLED = !!(mainConfig.channels && mainConfig.channels.enabled);
 } catch { /* use empty defaults */ }
 
 function sleepSync(ms) {
@@ -156,6 +158,7 @@ function launchHive(workspace) {
     content += `set WORKER_NAME=${agent.name}\r\n`;
     content += `set PROJECT_DIR=${ws.projectDir}\r\n`;
     if (model) content += `set AGENT_MODEL=${model}\r\n`;
+    if (CHANNELS_ENABLED) content += `set CHANNELS_ENABLED=1\r\n`;
     content += `cd /d "${agentSynapseDir}"\r\n`;
     if (agent.delay > 0) content += `timeout /t ${agent.delay} /nobreak >nul\r\n`;
     content += `call "${workerBat}" ${agent.name} "${ws.projectDir}"\r\n`;

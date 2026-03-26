@@ -26,6 +26,11 @@
     "dev-lead": "opus",
     "worker": "sonnet"
   },
+  "channels": {
+    "_doc": "MCP push channels (Claude Code v2.1.80+). When enabled, launchers pass --channels awm to claude CLI, allowing AWM to push assignments directly to worker sessions instead of polling via /next.",
+    "enabled": false,
+    "auto_register": true
+  },
   "stale_threshold_seconds": 120,
   "stale_auto_cleanup": true,
   "loop": {

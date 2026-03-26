@@ -48,12 +48,14 @@ try {
 } catch { /* config read failed — use default */ }
 const wtWindowName = `AgentSynapse-${workspaceName}`;
 
-// Load model default for worker role from synapse.config.json
+// Load config from synapse.config.json
 let agentModel = '';
+let channelsEnabled = false;
 try {
   const mainConfig = JSON.parse(fs.readFileSync(path.join(synapseDir, 'synapse.config.json'), 'utf8'));
   agentModel = (mainConfig.models && mainConfig.models.worker) || '';
-} catch { /* no config — skip model flag */ }
+  channelsEnabled = !!(mainConfig.channels && mainConfig.channels.enabled);
+} catch { /* no config — skip flags */ }
 
 // Write temp launcher script
 const scriptPath = path.join(tmpDir, `spawn-${workerName.toLowerCase()}.bat`);
@@ -67,6 +69,7 @@ const systemPrompt = [
 ].join(' ');
 
 const modelFlag = agentModel ? ` --model ${agentModel}` : '';
+const channelsFlag = channelsEnabled ? ' --channels awm' : '';
 
 let bat = '@echo off\r\n';
 bat += `cd /d "${synapseDir}"\r\n`;
@@ -74,7 +77,7 @@ bat += `set WORKER_NAME=${workerName}\r\n`;
 bat += `set WORKSPACE=${workspaceName}\r\n`;
 bat += `set PROJECT_DIR=${projectDir}\r\n`;
 if (agentModel) bat += `set AGENT_MODEL=${agentModel}\r\n`;
-bat += `claude --bare --dangerously-skip-permissions${modelFlag} --agent worker --append-system-prompt "${systemPrompt}" "${task.replace(/"/g, '""')}"\r\n`;
+bat += `claude --bare --dangerously-skip-permissions${modelFlag}${channelsFlag} --agent worker --append-system-prompt "${systemPrompt}" "${task.replace(/"/g, '""')}"\r\n`;
 
 fs.writeFileSync(scriptPath, bat);
 
