@@ -298,8 +298,10 @@ Assign tasks **using the agentId from the GET /workers response** (REQUIRED). Th
 ```bash
 curl -s -X POST http://127.0.0.1:8400/assign \
   -H "Content-Type: application/json" \
-  -d '{"agentId":"WORKER_AGENT_ID","task":"[task title]","description":"[detailed description with file paths, specs, acceptance criteria]"}'
+  -d '{"agentId":"WORKER_AGENT_ID","task":"[task title]","description":"[detailed description]","context":"{\"files\":[],\"references\":[],\"decisions\":[],\"acceptance\":[]}"}'
 ```
+
+Optional `context` field: JSON string with structured task references. AWM auto-creates a canonical engram for cross-agent recall. Shape: `{files: [{path, note}], references: [{type, value}], decisions: [string], acceptance: [string]}`.
 
 **Always GET /workers immediately before assigning** to ensure you have the worker's current agent ID. IDs change when workers restart.
 
@@ -682,7 +684,7 @@ curl -s -X POST http://127.0.0.1:8400/command \
 |--------|----------|---------|
 | POST | `/checkin` | Register/heartbeat `{"name":"...","role":"..."}` |
 | POST | `/checkout` | Sign off `{"agentId":"..."}` |
-| POST | `/assign` | Create assignment `{"agentId":"...","task":"...","description":"..."}` |
+| POST | `/assign` | Create assignment `{"agentId":"...","task":"...","description":"...","context":"..."}` |
 | GET | `/assignment?agentId=X` | Get agent's current assignment (singular, NOT `/assignments`) |
 | PATCH | `/assignment/:id` | Update assignment `{"status":"completed","result":"..."}` |
 | POST | `/assignment/:id/claim` | Claim pending assignment `{"agentId":"..."}` |
@@ -703,6 +705,14 @@ curl -s -X POST http://127.0.0.1:8400/command \
 | GET | `/findings?limit=N` | List findings |
 | GET | `/findings/summary` | Finding counts by severity/category |
 | POST | `/finding/:id/resolve` | Mark finding resolved |
+| PATCH | `/finding/:id` | Update finding `{"status":"open\|resolved","suggestion":"..."}` |
+| POST | `/reassign` | Reassign task `{"assignmentId":"...","targetAgentId":"..."}` or `{"assignmentId":"...","target_worker_name":"..."}` |
+| POST | `/decisions` | Record decision `{"agentId":"...","summary":"...","tags":"...","assignment_id":"..."}` |
+| GET | `/decisions?since_id=N` | List decisions (cursor-based) |
+| GET | `/timeline?limit=N` | Activity timeline (reverse chronological, agent_name enriched) |
+| GET | `/metrics` | Prometheus-format metrics (text/plain) |
+| GET | `/stats` | Worker/task/decision counts and uptime |
+| GET | `/assignments?status=X&limit=N&offset=N` | List assignments with filters and pagination |
 
 ### Task Manager (port 8420) — Only in `full` mode
 
