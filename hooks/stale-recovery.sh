@@ -1,6 +1,12 @@
 #!/bin/bash
 # Stale Recovery Script: Detect stale workers and reassign their tasks.
 #
+# Registration: This script is NOT a direct settings.json hook.
+# It is called automatically by hooks/coordinator-watchdog.sh on every
+# coordinator Notification event (i.e., on every background timer tick).
+# This is intentional — stale recovery runs on the coordinator's schedule,
+# not on every agent event. Do NOT add it as a direct hook.
+#
 # Run by the coordinator (or manually) to recover from workers that
 # disconnected without proper checkout. Finds agents whose lastSeen
 # is older than the threshold and:

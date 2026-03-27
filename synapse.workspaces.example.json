@@ -1,9 +1,15 @@
 {
-  "_comment": "Copy this to synapse.workspaces.json and fill in your own paths.",
+  "_comment": "Copy this to synapse.workspaces.json and fill in your own paths. This file is safe to commit.",
+  "_paths": {
+    "windows": "C:\\Users\\YOUR_USER\\Personal-Projects",
+    "macos":   "/Users/YOUR_USER/Personal-Projects",
+    "linux":   "/home/YOUR_USER/Personal-Projects"
+  },
   "workspaces": {
     "personal": {
       "name": "PERSONAL",
       "projectDir": "C:\\Users\\YOUR_USER\\Personal-Projects",
+      "_projectDir_unix": "/Users/YOUR_USER/Personal-Projects",
       "agents": [
         { "name": "coordinator", "role": "coordinator", "delay": 0 },
         { "name": "Dev-Lead", "role": "dev-lead", "delay": 5 },
@@ -14,6 +20,7 @@
     "work": {
       "name": "WORK",
       "projectDir": "C:\\Users\\YOUR_USER\\project",
+      "_projectDir_unix": "/Users/YOUR_USER/project",
       "agents": [
         { "name": "coordinator", "role": "coordinator", "delay": 0 },
         { "name": "Dev-Lead", "role": "dev-lead", "delay": 5 },

@@ -12,6 +12,9 @@
   "engines": {
     "node": ">=20.0.0"
   },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1"
+  },
   "keywords": [
     "agent-synapse",
     "push",

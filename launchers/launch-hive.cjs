@@ -59,15 +59,29 @@ if (Object.keys(WORKSPACES).length === 0) {
   process.exit(1);
 }
 
+const IS_WINDOWS = process.platform === 'win32';
+
 function killPort8400() {
   try {
-    const out = execSync('netstat -aon', { encoding: 'utf8', timeout: 5000, shell: 'cmd.exe' });
-    const lines = out.split('\n').filter(l => l.includes(':8400') && l.includes('LISTENING'));
-    for (const line of lines) {
-      const pid = line.trim().split(/\s+/).pop();
-      if (pid && /^\d+$/.test(pid)) {
-        try { execSync(`taskkill /F /PID ${pid}`, { stdio: 'pipe', shell: 'cmd.exe' }); } catch {}
+    if (IS_WINDOWS) {
+      const out = execSync('netstat -aon', { encoding: 'utf8', timeout: 5000, shell: 'cmd.exe' });
+      const lines = out.split('\n').filter(l => l.includes(':8400') && l.includes('LISTENING'));
+      for (const line of lines) {
+        const pid = line.trim().split(/\s+/).pop();
+        if (pid && /^\d+$/.test(pid)) {
+          try { execSync(`taskkill /F /PID ${pid}`, { stdio: 'pipe', shell: 'cmd.exe' }); } catch {}
+        }
       }
+    } else {
+      // Unix: lsof -ti:8400 returns PIDs listening on port 8400
+      try {
+        const pids = execSync('lsof -ti:8400', { encoding: 'utf8', timeout: 5000 }).trim();
+        if (pids) {
+          for (const pid of pids.split('\n').filter(Boolean)) {
+            try { execSync(`kill -9 ${pid}`, { stdio: 'pipe' }); } catch {}
+          }
+        }
+      } catch {}
     }
   } catch {}
 }
@@ -121,7 +135,15 @@ function launchHive(workspace) {
       stdio: ['ignore', awmLogFd, awmLogFd],
       windowsHide: true,
       shell: true,
-      env: { ...process.env, AWM_COORDINATION: 'true' },
+      env: {
+        ...process.env,
+        AWM_COORDINATION: 'true',
+        // Load synapse-push as an AWM plugin when channels are enabled.
+        // Polls /events for assignment_created and pushes to each agent's channel server.
+        ...(CHANNELS_ENABLED && {
+          AWM_PLUGINS: path.join(SYNAPSE_DIR, 'packages', 'synapse-push', 'dist', 'awm-plugin.js'),
+        }),
+      },
     }).unref();
 
     // Wait for coordination to be ready (not just health)
@@ -140,59 +162,117 @@ function launchHive(workspace) {
     }
   }
 
-  console.log(`\n  Launching ${ws.agents.length} agents in Windows Terminal...\n`);
+  console.log(`\n  Launching ${ws.agents.length} agents...\n`);
 
-  // Write temp launcher scripts for each agent (avoids quoting hell in wt args)
+  // Write temp launcher scripts for each agent (avoids quoting hell in terminal args)
   const os = require('os');
   const tmpDir = path.join(os.tmpdir(), 'agentsynapse-launch');
   fs.mkdirSync(tmpDir, { recursive: true });
 
-  const workerBat = path.join(LAUNCHER_DIR, 'start-worker.bat');
   // Agents must cd to AgentSynapse dir (where .claude/agents/ lives) so --agent flag works
   const agentSynapseDir = SYNAPSE_DIR;
-  const agentScripts = ws.agents.map(agent => {
-    const scriptPath = path.join(tmpDir, `launch-${agent.name.toLowerCase()}.bat`);
-    // Resolve model: per-agent override > role default from synapse.config.json > none
-    const model = agent.model || MODEL_DEFAULTS[agent.role] || '';
-    let content = '@echo off\r\n';
-    content += `set WORKER_NAME=${agent.name}\r\n`;
-    content += `set PROJECT_DIR=${ws.projectDir}\r\n`;
-    if (model) content += `set AGENT_MODEL=${model}\r\n`;
-    if (CHANNELS_ENABLED) content += `set CHANNELS_ENABLED=1\r\n`;
-    content += `cd /d "${agentSynapseDir}"\r\n`;
-    if (agent.delay > 0) content += `timeout /t ${agent.delay} /nobreak >nul\r\n`;
-    content += `call "${workerBat}" ${agent.name} "${ws.projectDir}"\r\n`;
-    fs.writeFileSync(scriptPath, content);
-    return { agent, scriptPath };
-  });
 
-  // Build wt command: all tabs in one window
-  const wtArgs = ['-w', `AgentSynapse-${ws.name}`];
-
-  agentScripts.forEach(({ agent, scriptPath }, i) => {
-    if (i > 0) wtArgs.push(';');
-    wtArgs.push('new-tab');
-    wtArgs.push('--title', `${agent.name} [${workspace}]`);
-    wtArgs.push('cmd', '/k', scriptPath);
-  });
-
-  // Launch Windows Terminal
-  try {
-    spawn('wt', wtArgs, { detached: true, stdio: 'ignore' }).unref();
-  } catch (err) {
-    console.error('  Windows Terminal (wt) not found. Falling back to separate windows...');
-    agentScripts.forEach(({ agent, scriptPath }) => {
-      spawn('cmd', ['/c', 'start', `"${agent.name}"`, 'cmd', '/k', scriptPath], {
-        detached: true, stdio: 'ignore', shell: true,
-      }).unref();
+  if (IS_WINDOWS) {
+    const workerBat = path.join(LAUNCHER_DIR, 'start-worker.bat');
+    const agentScripts = ws.agents.map(agent => {
+      const scriptPath = path.join(tmpDir, `launch-${agent.name.toLowerCase()}.bat`);
+      const model = agent.model || MODEL_DEFAULTS[agent.role] || '';
+      let content = '@echo off\r\n';
+      content += `set WORKER_NAME=${agent.name}\r\n`;
+      content += `set PROJECT_DIR=${ws.projectDir}\r\n`;
+      if (model) content += `set AGENT_MODEL=${model}\r\n`;
+      if (CHANNELS_ENABLED) {
+        const channelPort = 50000 + Math.floor(Math.random() * 9999);
+        content += `set CHANNELS_ENABLED=1\r\n`;
+        content += `set AWM_CHANNEL_PORT=${channelPort}\r\n`;
+      }
+      content += `cd /d "${agentSynapseDir}"\r\n`;
+      if (agent.delay > 0) content += `timeout /t ${agent.delay} /nobreak >nul\r\n`;
+      content += `call "${workerBat}" ${agent.name} "${ws.projectDir}"\r\n`;
+      fs.writeFileSync(scriptPath, content);
+      return { agent, scriptPath };
     });
+
+    // Build wt command: all tabs in one window
+    const wtArgs = ['-w', `AgentSynapse-${ws.name}`];
+    agentScripts.forEach(({ agent, scriptPath }, i) => {
+      if (i > 0) wtArgs.push(';');
+      wtArgs.push('new-tab');
+      wtArgs.push('--title', `${agent.name} [${workspace}]`);
+      wtArgs.push('cmd', '/k', scriptPath);
+    });
+
+    try {
+      spawn('wt', wtArgs, { detached: true, stdio: 'ignore' }).unref();
+    } catch (err) {
+      console.error('  Windows Terminal (wt) not found. Falling back to separate windows...');
+      agentScripts.forEach(({ agent, scriptPath }) => {
+        spawn('cmd', ['/c', 'start', `"${agent.name}"`, 'cmd', '/k', scriptPath], {
+          detached: true, stdio: 'ignore', shell: true,
+        }).unref();
+      });
+    }
+  } else {
+    // Unix: generate .sh launcher scripts
+    const workerSh = path.join(LAUNCHER_DIR, 'start-worker.sh');
+    const agentScripts = ws.agents.map(agent => {
+      const scriptPath = path.join(tmpDir, `launch-${agent.name.toLowerCase()}.sh`);
+      const model = agent.model || MODEL_DEFAULTS[agent.role] || '';
+      let content = '#!/usr/bin/env bash\n';
+      content += `export WORKER_NAME=${agent.name}\n`;
+      content += `export PROJECT_DIR="${ws.projectDir}"\n`;
+      if (model) content += `export AGENT_MODEL=${model}\n`;
+      if (CHANNELS_ENABLED) content += `export CHANNELS_ENABLED=1\n`;
+      content += `cd "${agentSynapseDir}"\n`;
+      if (agent.delay > 0) content += `sleep ${agent.delay}\n`;
+      content += `bash "${workerSh}" ${agent.name} "${ws.projectDir}"\n`;
+      fs.writeFileSync(scriptPath, content, { mode: 0o755 });
+      return { agent, scriptPath };
+    });
+
+    // Try gnome-terminal, then xterm, then fallback to background bash
+    const hasGnome = (() => { try { execSync('which gnome-terminal', { stdio: 'pipe' }); return true; } catch { return false; } })();
+    const hasXterm  = (() => { try { execSync('which xterm',         { stdio: 'pipe' }); return true; } catch { return false; } })();
+    const hasMacos  = (() => { try { execSync('which osascript',     { stdio: 'pipe' }); return true; } catch { return false; } })();
+
+    if (hasMacos) {
+      // macOS: open each in a new Terminal tab via osascript
+      agentScripts.forEach(({ agent, scriptPath }) => {
+        const osa = `tell application "Terminal" to do script "bash '${scriptPath}'"`;
+        try { spawn('osascript', ['-e', osa], { detached: true, stdio: 'ignore' }).unref(); } catch {}
+      });
+    } else if (hasGnome) {
+      const gnomeArgs = ['--'];
+      agentScripts.forEach(({ agent, scriptPath }, i) => {
+        if (i > 0) gnomeArgs.push('--tab', '--');
+        gnomeArgs.push('--title', `${agent.name} [${workspace}]`);
+        gnomeArgs.push('bash', scriptPath);
+      });
+      try { spawn('gnome-terminal', gnomeArgs, { detached: true, stdio: 'ignore' }).unref(); } catch {}
+    } else if (hasXterm) {
+      agentScripts.forEach(({ agent, scriptPath }) => {
+        spawn('xterm', ['-title', `${agent.name} [${workspace}]`, '-e', `bash "${scriptPath}"; bash`], {
+          detached: true, stdio: 'ignore',
+        }).unref();
+      });
+    } else {
+      // Fallback: run each agent in a background bash process (no separate terminal)
+      console.log('  No GUI terminal found. Launching agents as background processes...');
+      console.log('  Logs: tail -f data/awm.log');
+      agentScripts.forEach(({ agent, scriptPath }) => {
+        const logPath = path.join(SYNAPSE_DIR, 'data', `${agent.name.toLowerCase()}.log`);
+        const logFd = fs.openSync(logPath, 'a');
+        spawn('bash', [scriptPath], { detached: true, stdio: ['ignore', logFd, logFd] }).unref();
+        console.log(`  ${agent.name}: logs at data/${agent.name.toLowerCase()}.log`);
+      });
+    }
   }
 
   console.log(`  ${ws.name} hive launched (${ws.agents.length} agents):`);
   console.log(`    ${ws.agents.map(a => a.name).join(' + ')}`);
   console.log(`  Project: ${ws.projectDir}`);
   console.log(`\n  Status:   curl http://127.0.0.1:8400/workers`);
-  console.log(`  Shutdown: node ${path.join(LAUNCHER_DIR, 'launch-hive.js')} shutdown`);
+  console.log(`  Shutdown: node ${path.join(LAUNCHER_DIR, 'launch-hive.cjs')} shutdown`);
   console.log();
 }
 
@@ -225,7 +305,10 @@ if (!arg) {
         j.workers.forEach(w => console.log(`    ${w.name.padEnd(12)} ${w.status.padEnd(8)} ${w.alive ? 'alive' : 'STALE'}`));
       } catch { console.log('  Coordinator not running.'); }
     } else if (choice === wsKeys.length + 2) {
-      try { execSync(`"${path.join(LAUNCHER_DIR, 'shutdown.bat')}"`, { stdio: 'inherit' }); }
+      const shutdownScript = IS_WINDOWS
+        ? `"${path.join(LAUNCHER_DIR, 'shutdown.bat')}"`
+        : `bash "${path.join(LAUNCHER_DIR, 'shutdown.sh')}"`;
+      try { execSync(shutdownScript, { stdio: 'inherit' }); }
       catch { console.log('  Shutdown failed.'); }
     }
     process.exit(0);
@@ -240,7 +323,10 @@ if (!arg) {
     j.workers.forEach(w => console.log(`  ${w.name.padEnd(12)} ${w.status.padEnd(8)} ${w.alive ? 'alive' : 'STALE'}`));
   } catch { console.log('Coordinator not running.'); }
 } else if (arg === 'shutdown') {
-  try { execSync(`"${path.join(LAUNCHER_DIR, 'shutdown.bat')}"`, { stdio: 'inherit' }); }
+  const shutdownScript = IS_WINDOWS
+    ? `"${path.join(LAUNCHER_DIR, 'shutdown.bat')}"`
+    : `bash "${path.join(LAUNCHER_DIR, 'shutdown.sh')}"`;
+  try { execSync(shutdownScript, { stdio: 'inherit' }); }
   catch { console.log('Shutdown failed.'); }
 } else {
   console.log(`Unknown command: ${arg}`);

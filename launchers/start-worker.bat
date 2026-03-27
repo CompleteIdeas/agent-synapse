@@ -44,10 +44,16 @@ if %errorlevel% neq 0 (
 set MODEL_FLAG=
 if defined AGENT_MODEL set MODEL_FLAG=--model %AGENT_MODEL%
 
-:: Build --channels flag if CHANNELS_ENABLED is set (set by launch-hive.cjs from synapse.config.json)
-:: When enabled, AWM can push assignments directly to worker sessions via MCP channels
+:: Build channel flags if CHANNELS_ENABLED is set (set by launch-hive.cjs from synapse.config.json)
+:: AWM_CHANNEL_PORT is the HTTP port for the local channel server subprocess.
+:: Uses node to write the MCP config JSON (avoids backslash escaping in batch).
+:: Graceful degradation: if Teams channels not enabled, Claude Code ignores the flag.
 set CHANNELS_FLAG=
-if defined CHANNELS_ENABLED set CHANNELS_FLAG=--channels awm
+if defined CHANNELS_ENABLED (
+    set CHANNEL_MCP_FILE=%TEMP%\awm-channel-mcp-%WORKER_NAME%.json
+    node -e "const p=require('path'),f=require('fs');f.writeFileSync(process.env.CHANNEL_MCP_FILE,JSON.stringify({mcpServers:{awm:{command:'node',args:[p.join(process.cwd(),'packages','synapse-push','dist','channel-server.js')]}}}))"
+    set CHANNELS_FLAG=--dangerously-load-development-channels server:awm --mcp-config "%CHANNEL_MCP_FILE%"
+)
 
 :: Handle coordinator
 if /i "%WORKER_NAME%"=="coordinator" (

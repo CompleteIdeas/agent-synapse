@@ -86,14 +86,24 @@ export function createPushAdapter(userConfig: Partial<PushConfig> = {}) {
 
       result.channelId = session.channel_id;
 
-      // TODO: When --channels reaches GA, replace this log with actual MCP channel push:
-      //   await mcpClient.pushToChannel(session.channel_id, { type: 'assignment', detail });
-      console.log(
-        `[synapse-push] Push intent: agent=${session.agent_name ?? agentId} ` +
-        `channel=${session.channel_id} task=${detail.slice(0, 80)}`
-      );
+      // POST assignment to the channel server's local HTTP endpoint.
+      // channel_id is http://127.0.0.1:{AWM_CHANNEL_PORT} — set during worker channel registration.
+      const channelRes = await fetch(`${session.channel_id}/push`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: `New assignment:\n\n${detail}`,
+          meta: { source: 'awm-coordinator', agent: session.agent_name ?? agentId },
+        }),
+        signal: AbortSignal.timeout(3000),
+      });
 
-      // Update push stats via coordinator
+      if (!channelRes.ok) {
+        result.error = `channel push failed: ${channelRes.status}`;
+        return result;
+      }
+
+      // Update push stats in coordinator
       await fetch(`${config.coordinatorUrl}/channel/push`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

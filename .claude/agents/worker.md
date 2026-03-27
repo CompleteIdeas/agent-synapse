@@ -108,14 +108,14 @@ The `/next` endpoint does checkin + command check + assignment poll in one call.
 
 If connection error: **"Coordinator not running. Start the coordinator first."**
 
-**Channel registration (future — when `channels.enabled` is true in synapse.config.json):**
-If launched with `--channels awm`, the AWM MCP server can push assignments directly to your session instead of requiring `/next` polling. After receiving your `agentId` from `/next`:
+**Channel registration (when `channels.enabled: true` in synapse.config.json):**
+If `AWM_CHANNEL_PORT` is set in your environment, the AWM channel server is already running on that port (spawned by Claude Code via `--dangerously-load-development-channels server:awm`). After receiving your `agentId` from `/next`, register the channel:
 ```bash
 curl -s -X POST http://127.0.0.1:8400/channel/register \
   -H "Content-Type: application/json" \
-  -d "{\"agentId\":\"YOUR_AGENT_ID\",\"channelId\":\"$WORKER_NAME-session\"}"
+  -d "{\"agentId\":\"YOUR_AGENT_ID\",\"channelId\":\"http://127.0.0.1:${AWM_CHANNEL_PORT}\"}"
 ```
-On checkout, channel sessions are auto-cleaned. This is not yet active — the coordinator sets `channels.enabled: false` by default. When enabled, it replaces the idle polling loop with push-based assignment delivery.
+When registered, assignments arrive as `<channel source="awm">` messages — no idle polling needed. On checkout, channel sessions are auto-cleaned. **If `AWM_CHANNEL_PORT` is not set, skip channel registration and use the `/next` polling loop instead** (graceful fallback for users without Teams channels enabled).
 
 **If `command` is active:**
 - **BUILD_FREEZE** → Do not start work. Commit, release locks, heartbeat idle. Wait.

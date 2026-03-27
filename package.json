@@ -5,7 +5,6 @@
   "type": "module",
   "workspaces": [
     "packages/awm",
-    "packages/coordinator",
     "packages/task-manager",
     "packages/memory-client",
     "packages/synapse-push"
