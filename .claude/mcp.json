@@ -2,10 +2,14 @@
   "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/mcp-schema.json",
   "mcpServers": {
     "agent-working-memory": {
-      "command": "npx",
-      "args": ["tsx", "./packages/awm/src/mcp.ts"],
+      "command": "node",
+      "args": [
+        "C:/Users/robert/Personal-Projects/AgentSynapse/packages/awm/dist/mcp.js"
+      ],
       "env": {
-        "AWM_DB_PATH": "./data/memory.db"
+        "AWM_DB_PATH": "C:/Users/robert/Personal-Projects/AgentSynapse/packages/awm/memory.db",
+        "AWM_HOOK_PORT": "8401",
+        "AWM_HOOK_SECRET": "38526a4444f5e7cda872846a1dc931600f2af98e7ddfbce9346970c63466622c"
       }
     }
   }

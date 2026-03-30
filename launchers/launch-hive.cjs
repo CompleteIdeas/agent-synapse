@@ -162,6 +162,87 @@ function launchHive(workspace) {
     }
   }
 
+  // Seed canonical memories on first launch (idempotent via --dedupe)
+  const seedFile = path.join(SYNAPSE_DIR, 'data', 'seed-memories.json');
+  const awmDb = path.join(SYNAPSE_DIR, 'packages', 'awm', 'memory.db');
+  if (fs.existsSync(seedFile)) {
+    try {
+      const seedOut = execSync(
+        `npx tsx src/cli.ts import "${seedFile}" --db "${awmDb}" --dedupe`,
+        { cwd: path.join(SYNAPSE_DIR, 'packages', 'awm'), encoding: 'utf8', timeout: 15000 }
+      );
+      console.log(`  Seed memories: ${seedOut.trim()}`);
+    } catch (err) {
+      console.log(`  Seed import skipped: ${err.message?.split('\n')[0] || 'error'}`);
+    }
+  }
+
+  // --- Memory partition setup ---
+  // The MCP env block in .mcp.json overrides inherited env vars, so AWM_AGENT_ID
+  // MUST NOT be hardcoded in any .mcp.json. Instead we:
+  //   1. Strip AWM_AGENT_ID from all discoverable .mcp.json files (idempotent)
+  //   2. Supply AWM_AGENT_ID via process env in each agent's launcher script
+  // This avoids race conditions when two workspaces launch near-simultaneously
+  // and ensures the correct memory partition without rewriting shared configs.
+  const memoryId = ws.memoryId || workspace;  // fallback to workspace key
+  const awmDistMcp = path.join(SYNAPSE_DIR, 'packages', 'awm', 'dist', 'mcp.js').replace(/\\/g, '/');
+  const awmDbPath = path.join(SYNAPSE_DIR, 'packages', 'awm', 'memory.db').replace(/\\/g, '/');
+
+  // Read hook secret from data dir or existing configs
+  let hookSecret = '';
+  const hookSecretPath = path.join(SYNAPSE_DIR, 'packages', 'awm', 'data', '.awm-hook-secret');
+  try { hookSecret = fs.readFileSync(hookSecretPath, 'utf8').trim(); } catch {}
+  if (!hookSecret) {
+    // Scan existing .mcp.json files for the secret
+    const _os = require('os');
+    const candidates = [
+      path.join(ws.projectDir, '.mcp.json'),
+      path.join(SYNAPSE_DIR, '.claude', 'mcp.json'),
+      path.join(_os.homedir(), '.mcp.json'),
+    ];
+    for (const p of candidates) {
+      if (hookSecret) break;
+      try {
+        const c = JSON.parse(fs.readFileSync(p, 'utf8'));
+        hookSecret = c?.mcpServers?.['agent-working-memory']?.env?.AWM_HOOK_SECRET || '';
+      } catch {}
+    }
+  }
+
+  // Ensure all discoverable .mcp.json files have AWM configured WITHOUT AWM_AGENT_ID.
+  // Claude Code's MCP env block overrides inherited env vars, so if AWM_AGENT_ID
+  // is present in .mcp.json it will always win over the process env we set in the
+  // agent launcher script. Removing it lets the process env control the partition.
+  const mcpEntry = {
+    command: 'node',
+    args: [awmDistMcp],
+    env: {
+      AWM_DB_PATH: awmDbPath,
+      // AWM_AGENT_ID intentionally omitted — supplied via process env per workspace
+      AWM_HOOK_PORT: '8401',
+      ...(hookSecret && { AWM_HOOK_SECRET: hookSecret }),
+    },
+  };
+
+  const _osHome = require('os').homedir();
+  const mcpTargets = [
+    path.join(ws.projectDir, '.mcp.json'),           // project root (Claude Code walks up to find this)
+    path.join(SYNAPSE_DIR, '.claude', 'mcp.json'),    // AgentSynapse project scope
+    path.join(_osHome, '.mcp.json'),                   // global fallback
+  ];
+  for (const mcpPath of mcpTargets) {
+    let existing = {};
+    try { existing = JSON.parse(fs.readFileSync(mcpPath, 'utf8')); } catch {}
+    if (!existing.mcpServers) existing.mcpServers = {};
+    existing.mcpServers['agent-working-memory'] = mcpEntry;
+    if (mcpPath.includes('.claude')) {
+      existing['$schema'] = 'https://raw.githubusercontent.com/anthropics/claude-code/main/mcp-schema.json';
+    }
+    fs.mkdirSync(path.dirname(mcpPath), { recursive: true });
+    fs.writeFileSync(mcpPath, JSON.stringify(existing, null, 2) + '\n');
+  }
+  console.log(`  Memory partition: ${memoryId} (env-driven, .mcp.json cleaned)`);
+
   console.log(`\n  Launching ${ws.agents.length} agents...\n`);
 
   // Write temp launcher scripts for each agent (avoids quoting hell in terminal args)
@@ -180,6 +261,7 @@ function launchHive(workspace) {
       let content = '@echo off\r\n';
       content += `set WORKER_NAME=${agent.name}\r\n`;
       content += `set PROJECT_DIR=${ws.projectDir}\r\n`;
+      content += `set AWM_AGENT_ID=${memoryId}\r\n`;
       if (model) content += `set AGENT_MODEL=${model}\r\n`;
       if (CHANNELS_ENABLED) {
         const channelPort = 50000 + Math.floor(Math.random() * 9999);
@@ -221,6 +303,7 @@ function launchHive(workspace) {
       let content = '#!/usr/bin/env bash\n';
       content += `export WORKER_NAME=${agent.name}\n`;
       content += `export PROJECT_DIR="${ws.projectDir}"\n`;
+      content += `export AWM_AGENT_ID=${memoryId}\n`;
       if (model) content += `export AGENT_MODEL=${model}\n`;
       if (CHANNELS_ENABLED) content += `export CHANNELS_ENABLED=1\n`;
       content += `cd "${agentSynapseDir}"\n`;

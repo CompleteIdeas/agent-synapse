@@ -5,27 +5,15 @@ echo  AWM Activity Log
 echo  =================
 echo.
 
-:: Find AWM log file — check known locations
-if exist "%~dp0..\packages\memory\data\awm.log" (
-    set LOG_FILE=%~dp0..\packages\memory\data\awm.log
-) else if exist "%~dp0..\node_modules\agent-synapse\packages\memory\data\awm.log" (
-    set LOG_FILE=%~dp0..\node_modules\agent-synapse\packages\memory\data\awm.log
-) else (
-    :: Try npm global install location
-    for /f "delims=" %%G in ('npm root -g 2^>nul') do (
-        if exist "%%G\agent-synapse\packages\memory\data\awm.log" (
-            set LOG_FILE=%%G\agent-synapse\packages\memory\data\awm.log
-        )
-    )
-    :: Default to project data dir if nothing else found
-    if not defined LOG_FILE set LOG_FILE=%~dp0..\data\awm.log
-)
+:: Log is written to data/awm.log by launch-hive.cjs
+set LOG_FILE=%~dp0..\data\awm.log
 
 echo  Log: %LOG_FILE%
-echo  Waiting for log file...
-echo.
 
 :: Wait for the log file to exist (up to 60 seconds)
+if exist "%LOG_FILE%" goto :tail_log
+echo  Waiting for log file...
+echo.
 set TRIES=0
 :wait_log
 if exist "%LOG_FILE%" goto :tail_log
