@@ -26,6 +26,10 @@ Thumbs.db
 *.swp
 *.swo
 
+# Temp artifacts (DB schema exports, event scratch files)
+schema_*.txt
+event_*.txt
+
 # Runtime state
 coordinator_state.json
 .compact-breadcrumb-*.json
