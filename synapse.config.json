@@ -34,7 +34,7 @@
   "stale_threshold_seconds": 120,
   "stale_auto_cleanup": true,
   "loop": {
-    "tick_seconds": 180,
+    "tick_seconds": 120,
     "watchdog_seconds": 420,
     "stale_tick_seconds": 240
   }

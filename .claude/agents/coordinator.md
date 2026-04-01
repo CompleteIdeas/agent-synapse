@@ -134,7 +134,7 @@ This gives you:
 - `services.coordinator` — the coordinator URL (default: `http://127.0.0.1:8400`)
 - `services.task_manager` — the task manager URL (default: `http://127.0.0.1:8420`)
 - `allow_degraded` — if `true`, continue if optional services are down; if `false`, fail fast
-- `loop.tick_seconds` — monitoring interval (default: 180)
+- `loop.tick_seconds` — monitoring interval (default: 120)
 - `loop.watchdog_seconds` — backup timer (default: 420)
 
 **Use these URLs for all API calls.** Do NOT hardcode URLs.
@@ -427,7 +427,7 @@ If work is queued but no idle workers exist:
 ### State: MONITOR (watch for completions — primary running state)
 
 **Actions:**
-1. Schedule next tick: `sleep 180` (run_in_background) — **ALWAYS FIRST**
+1. Schedule next tick: `sleep 120` (run_in_background) — **ALWAYS FIRST**
 2. Heartbeat: `POST /checkin`
 3. Check workers: `GET /workers` — any new, any stale?
 4. Check completions: `GET /events?limit=20` — process events > `last_event_id`

@@ -179,43 +179,38 @@ This surfaces decisions other workers/coordinator have written. Read the results
 
 > **⚠ THIS LOOP IS MANDATORY, NOT OPTIONAL.** You MUST keep polling until you get work, a SHUTDOWN command, or 30 minutes elapse. Do NOT break out of this loop to ask the user what to do. Do NOT say "standing by" or "ready for work" or "what would you like me to work on?" — the coordinator assigns work, not the user. Your ONLY job when idle is to KEEP POLLING SILENTLY.
 
-**Exponential backoff polling** — reduces coordinator load when many workers idle:
+**CRITICAL: Use a FOREGROUND blocking loop, NOT background tasks.** Background tasks complete while you're at the prompt and get lost. Use this exact pattern:
 
-| Poll range | Interval | Cumulative time |
-|------------|----------|-----------------|
-| Polls 1–4 | 15 seconds | ~1 min |
-| Polls 5–14 | 30 seconds | ~6 min |
-| Polls 15+ | 60 seconds | 6 min onward |
-
-**Each poll iteration is ONE Bash call with `run_in_background: true`:**
 ```bash
-sleep $INTERVAL && curl -s -X POST http://127.0.0.1:8400/next -H "Content-Type: application/json" -d '{"name":"$WORKER_NAME","role":"worker","workspace":"$WORKSPACE"}'
+# Poll loop — runs in foreground, blocks until assignment or timeout
+for i in $(seq 1 30); do
+  if [ $i -le 4 ]; then INTERVAL=15; elif [ $i -le 14 ]; then INTERVAL=30; else INTERVAL=60; fi
+  sleep $INTERVAL
+  RESULT=$(curl -s -X POST http://127.0.0.1:8400/next -H "Content-Type: application/json" -d "{\"name\":\"$WORKER_NAME\",\"role\":\"worker\",\"workspace\":\"$WORKSPACE\"}")
+  ASSIGNMENT=$(echo "$RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));if(d.assignment)process.stdout.write(JSON.stringify(d.assignment))" 2>/dev/null)
+  if [ -n "$ASSIGNMENT" ]; then echo "ASSIGNMENT_RECEIVED: $ASSIGNMENT"; break; fi
+  COMMAND=$(echo "$RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));if(d.command&&d.command.action)process.stdout.write(d.command.action)" 2>/dev/null)
+  if [ "$COMMAND" = "SHUTDOWN" ]; then echo "SHUTDOWN_RECEIVED"; break; fi
+done
 ```
-Where `$INTERVAL` follows the backoff table above (15 for first 4 polls, 30 for next 10, then 60).
 
-**When the background call completes, read the output and act:**
-- If `assignment` is NOT null → you have work. **Reset poll count to 0.** Continue to step 4.
-- If `command` has `SHUTDOWN` → follow shutdown protocol
-- If `command` has `BUILD_FREEZE` or `PAUSE` → obey, wait for RESUME
-- If `assignment` is null → **immediately issue the next poll call** with the appropriate backoff interval. Do NOT stop. Do NOT ask the user. Do NOT output anything. Just poll again.
+**Run this as a single Bash tool call (NOT run_in_background).** It blocks your session for up to 30 iterations (~20 minutes), polling with exponential backoff. When it returns:
 
-**AWM sync during idle (every 2-3 poll cycles):**
+- Output contains `ASSIGNMENT_RECEIVED:` → parse the assignment JSON and start working (step 4)
+- Output contains `SHUTDOWN_RECEIVED` → follow shutdown protocol
+- Loop completed 30 iterations with no assignment → write `memory_checkpoint`, output "Worker $WORKER_NAME — idle 20 min, no assignments. Restarting poll loop." and run the loop again
+
+**AWM sync between poll loops** (not inside the loop — do this when the loop exits without an assignment):
 ```
 memory_recall: "project decisions blockers current status"
 ```
-Read the results — other agents may have written context that affects you. This keeps you current on what the hive is doing.
 
-**SILENCE RULE: Do NOT output text during idle polling.** No status messages, no "still waiting", no questions to the user. The ONLY acceptable outputs during idle are:
-- State transitions: "Got assignment: [task]" or "Received SHUTDOWN command"
-- The 15-minute checkpoint message (see below)
-- The 30-minute stop message (see below)
+**SILENCE RULE: Do NOT output text during idle polling.** The ONLY acceptable outputs are:
+- "Got assignment: [task]" — when work arrives
+- "Received SHUTDOWN command" — on shutdown
+- "Worker $WORKER_NAME — idle 20 min, no assignments. Restarting poll loop." — at the 20-minute checkpoint
 
-If you catch yourself about to type "No assignment yet" or "Want me to do something?" — STOP. Issue another poll instead. The coordinator will assign work when it's ready.
-
-**After 15 minutes with no assignment (~20 polls):**
-1. Write `memory_checkpoint` with your current state
-2. Output: **"Worker $WORKER_NAME — idle 15 min, no assignments. Still polling."**
-3. Continue polling at 60s intervals (already at slowest pace)
+If you catch yourself about to type "No assignment yet" or "Want me to do something?" — STOP. Run the poll loop again.
 
 **After 30 minutes total:**
 1. Call `memory_task_end` with "No work after 30 min — stopping"
