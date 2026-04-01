@@ -404,21 +404,49 @@ Write at every state transition. Read on startup and after compaction.
 
 **Actions:**
 1. `GET /workers` — get current agent IDs (REQUIRED before every assign)
-2. For each idle worker with no assignment → assign from queue
+2. For each idle worker with no assignment → assign using `worker_name` (NOT `agentName`)
 3. Front-load: if 9 tasks and 3 workers, assign 3 each
 4. In `full` mode, also update Task Manager status
 5. Write AWM context brief for each assigned task area
 
+#### How to Assign Work (CRITICAL — follow exactly)
+
+Workers are idle at their prompt waiting for channel push notifications. When you assign work:
+
+```bash
+# Step 1: Assign — use worker_name field (NOT agentName, NOT agent_name)
+curl -s -X POST http://127.0.0.1:8400/assign \
+  -H "Content-Type: application/json" \
+  -d '{"worker_name":"Worker-A","task":"<task description>","workspace":"WORK"}'
+```
+
+This creates the assignment AND triggers the synapse-push plugin to automatically push a `← awm:` notification to the worker's channel server. The worker wakes up, calls `/next`, gets the assignment, and starts working.
+
+**Key rules:**
+- Use `worker_name` — NOT `agentName`, NOT `agent_name`, NOT `agent_id`. Zod silently strips unknown fields, causing assignments to go `pending` with no agent and no push.
+- The `pushed:true` in the response means the push was delivered to the channel server. The worker will wake up within seconds.
+- Do NOT manually push to channel servers. The synapse-push plugin handles this automatically when events are created.
+- Do NOT poll `/workers` in a loop waiting for pickup. The push is instant.
+
+#### Verifying Delivery
+
+After assigning, you can verify:
+```bash
+# Check channel session push count
+curl -s http://127.0.0.1:8400/channel/sessions
+# push_count should increment, last_push_at should update
+```
+
 #### When No Idle Workers Are Available
 
 If work is queued but no idle workers exist:
-1. Queue assignments as `pending` (POST /assign without agentId)
+1. Queue assignments as `pending` (POST /assign without worker_name)
 2. Try `node launchers/spawn-worker.cjs Worker-X "<project-dir>" "<task summary>"`
 3. If spawning isn't appropriate, tell the user:
    "Work queued. Launch workers when ready:
     - Worker-A: [task summary]
     - Worker-B: [task summary]"
-4. Do NOT poll GET /workers in a loop. Workers claim work via /next on startup.
+4. Workers will get push notifications when they come online and register.
 
 **Transitions:**
 - All idle workers now busy → **MONITOR**
@@ -427,15 +455,17 @@ If work is queued but no idle workers exist:
 ### State: MONITOR (watch for completions — primary running state)
 
 **Actions:**
-1. Schedule next tick: `sleep 120` (run_in_background) — **ALWAYS FIRST**
+1. Schedule next tick: `sleep 300` (run_in_background) — **5-minute fallback check**
 2. Heartbeat: `POST /checkin`
 3. Check workers: `GET /workers` — any new, any stale?
 4. Check completions: `GET /events?limit=20` — process events > `last_event_id`
    - For each completion: tell user, update TM (full mode), write AWM, update `last_event_id`
 5. Check for stuck tasks (>30 min on small task → consider reassign)
-6. Clean stale workers: `POST /stale/cleanup?seconds=120`
+6. Clean stale workers: `POST /stale/cleanup?seconds=300`
 7. Save state: `coordinator_state.json` with `cycle_id++`, `last_tick_at`
-8. Wait for next tick
+8. Wait for next tick — or respond immediately to `← awm:` channel messages
+
+**Channel push:** You also receive `← awm:` notifications when workers complete tasks or when events happen. Respond to these immediately — don't wait for the next tick. This is the primary way you learn about completions.
 
 **Transitions:**
 - Worker completed + now idle → **DISPATCH** (assign more work)
