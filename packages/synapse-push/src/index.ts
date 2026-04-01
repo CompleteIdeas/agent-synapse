@@ -54,11 +54,15 @@ export function createPushAdapter(userConfig: Partial<PushConfig> = {}) {
       for (const event of events) {
         if (event.id > lastEventId) lastEventId = event.id;
         if (event.agent_id) {
-          await handleAssignmentCreated(event.agent_id, event.detail);
+          console.log(`[synapse-push] Event ${event.id}: agent=${event.agent_id}, pushing...`);
+          const result = await handleAssignmentCreated(event.agent_id, event.detail);
+          console.log(`[synapse-push] Push result: pushed=${result.pushed}, channel=${result.channelId}, error=${result.error ?? 'none'}`);
+        } else {
+          console.log(`[synapse-push] Event ${event.id}: no agent_id, skipping`);
         }
       }
-    } catch {
-      // Network error or timeout — silently retry next poll
+    } catch (err) {
+      console.error(`[synapse-push] Poll error: ${err}`);
     }
   }
 
@@ -85,6 +89,7 @@ export function createPushAdapter(userConfig: Partial<PushConfig> = {}) {
       }
 
       result.channelId = session.channel_id;
+      console.log(`[synapse-push] Found session: agent=${agentId}, channel=${session.channel_id}, POSTing to ${session.channel_id}/push`);
 
       // POST assignment to the channel server's local HTTP endpoint.
       // channel_id is http://127.0.0.1:{AWM_CHANNEL_PORT} — set during worker channel registration.
