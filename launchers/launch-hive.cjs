@@ -141,7 +141,9 @@ function launchHive(workspace) {
         // Load synapse-push as an AWM plugin when channels are enabled.
         // Polls /events for assignment_created and pushes to each agent's channel server.
         ...(CHANNELS_ENABLED && {
-          AWM_PLUGINS: path.join(SYNAPSE_DIR, 'packages', 'synapse-push', 'dist', 'awm-plugin.js'),
+          AWM_PLUGINS: IS_WINDOWS
+            ? 'file:///' + path.join(SYNAPSE_DIR, 'packages', 'synapse-push', 'dist', 'awm-plugin.js').replace(/\\/g, '/')
+            : path.join(SYNAPSE_DIR, 'packages', 'synapse-push', 'dist', 'awm-plugin.js'),
         }),
       },
     }).unref();
