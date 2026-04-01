@@ -29,7 +29,9 @@ if not defined WORKSPACE (
 )
 if not defined WORKSPACE set WORKSPACE=DEFAULT
 
-:: DO NOT cd away from AgentSynapse — agent definitions live here
+:: Agent defs are copied to PROJECT_DIR by launch-hive.cjs — cd there
+:: so Claude Code loads the correct project context (skills, CLAUDE.md, git)
+cd /d "%PROJECT_DIR%"
 :: The PROJECT_DIR is passed to Claude via system prompt
 
 :: Check AWM is running
@@ -51,7 +53,7 @@ if defined AGENT_MODEL set MODEL_FLAG=--model %AGENT_MODEL%
 set CHANNELS_FLAG=
 if defined CHANNELS_ENABLED (
     set CHANNEL_MCP_FILE=%TEMP%\awm-channel-mcp-%WORKER_NAME%.json
-    node -e "const p=require('path'),f=require('fs');f.writeFileSync(process.env.CHANNEL_MCP_FILE,JSON.stringify({mcpServers:{awm:{command:'node',args:[p.join(process.cwd(),'packages','synapse-push','dist','channel-server.js')]}}}))"
+    node -e "const p=require('path'),f=require('fs');f.writeFileSync(process.env.CHANNEL_MCP_FILE,JSON.stringify({mcpServers:{awm:{command:'node',args:[p.join(process.env.SYNAPSE_DIR,'packages','synapse-push','dist','channel-server.js')]}}}))"
     set CHANNELS_FLAG=--dangerously-load-development-channels server:awm --mcp-config "%CHANNEL_MCP_FILE%"
 )
 

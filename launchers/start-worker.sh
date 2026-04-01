@@ -52,7 +52,7 @@ if [ -n "$CHANNELS_ENABLED" ]; then
     export AWM_CHANNEL_PORT
   fi
   CHANNEL_MCP_FILE=$(mktemp /tmp/awm-channel-mcp-XXXXXX.json)
-  CHANNEL_SERVER_JS="$(pwd)/packages/synapse-push/dist/channel-server.js"
+  CHANNEL_SERVER_JS="${SYNAPSE_DIR}/packages/synapse-push/dist/channel-server.js"
   node -e "const f=require('fs');f.writeFileSync('$CHANNEL_MCP_FILE',JSON.stringify({mcpServers:{awm:{command:'node',args:['$CHANNEL_SERVER_JS']}}}))"
   CHANNELS_FLAG="--dangerously-load-development-channels server:awm --mcp-config $CHANNEL_MCP_FILE"
 fi

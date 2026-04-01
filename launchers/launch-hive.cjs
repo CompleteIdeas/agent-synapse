@@ -243,6 +243,19 @@ function launchHive(workspace) {
   }
   console.log(`  Memory partition: ${memoryId} (env-driven, .mcp.json cleaned)`);
 
+  // Copy agent definitions to PROJECT_DIR so Claude Code loads the correct
+  // project context (skills, CLAUDE.md, git, file-based memory) from the
+  // target workspace instead of AgentSynapse.
+  const agentDefsSource = path.join(SYNAPSE_DIR, '.claude', 'agents');
+  const agentDefsDest = path.join(ws.projectDir, '.claude', 'agents');
+  fs.mkdirSync(agentDefsDest, { recursive: true });
+  for (const f of fs.readdirSync(agentDefsSource)) {
+    if (f.endsWith('.md')) {
+      fs.copyFileSync(path.join(agentDefsSource, f), path.join(agentDefsDest, f));
+    }
+  }
+  console.log(`  Agent defs: copied to ${agentDefsDest}`);
+
   console.log(`\n  Launching ${ws.agents.length} agents...\n`);
 
   // Write temp launcher scripts for each agent (avoids quoting hell in terminal args)
@@ -250,8 +263,9 @@ function launchHive(workspace) {
   const tmpDir = path.join(os.tmpdir(), 'agentsynapse-launch');
   fs.mkdirSync(tmpDir, { recursive: true });
 
-  // Agents must cd to AgentSynapse dir (where .claude/agents/ lives) so --agent flag works
-  const agentSynapseDir = SYNAPSE_DIR;
+  // Agents cd to PROJECT_DIR (agent defs copied there above) so Claude Code
+  // loads the correct project context: skills, CLAUDE.md, git, file-based memory.
+  const agentLaunchDir = ws.projectDir;
 
   if (IS_WINDOWS) {
     const workerBat = path.join(LAUNCHER_DIR, 'start-worker.bat');
@@ -261,6 +275,7 @@ function launchHive(workspace) {
       let content = '@echo off\r\n';
       content += `set WORKER_NAME=${agent.name}\r\n`;
       content += `set PROJECT_DIR=${ws.projectDir}\r\n`;
+      content += `set SYNAPSE_DIR=${SYNAPSE_DIR}\r\n`;
       content += `set AWM_AGENT_ID=${memoryId}\r\n`;
       if (model) content += `set AGENT_MODEL=${model}\r\n`;
       if (CHANNELS_ENABLED) {
@@ -268,7 +283,7 @@ function launchHive(workspace) {
         content += `set CHANNELS_ENABLED=1\r\n`;
         content += `set AWM_CHANNEL_PORT=${channelPort}\r\n`;
       }
-      content += `cd /d "${agentSynapseDir}"\r\n`;
+      content += `cd /d "${agentLaunchDir}"\r\n`;
       if (agent.delay > 0) content += `timeout /t ${agent.delay} /nobreak >nul\r\n`;
       content += `call "${workerBat}" ${agent.name} "${ws.projectDir}"\r\n`;
       fs.writeFileSync(scriptPath, content);
@@ -303,10 +318,11 @@ function launchHive(workspace) {
       let content = '#!/usr/bin/env bash\n';
       content += `export WORKER_NAME=${agent.name}\n`;
       content += `export PROJECT_DIR="${ws.projectDir}"\n`;
+      content += `export SYNAPSE_DIR="${SYNAPSE_DIR}"\n`;
       content += `export AWM_AGENT_ID=${memoryId}\n`;
       if (model) content += `export AGENT_MODEL=${model}\n`;
       if (CHANNELS_ENABLED) content += `export CHANNELS_ENABLED=1\n`;
-      content += `cd "${agentSynapseDir}"\n`;
+      content += `cd "${agentLaunchDir}"\n`;
       if (agent.delay > 0) content += `sleep ${agent.delay}\n`;
       content += `bash "${workerSh}" ${agent.name} "${ws.projectDir}"\n`;
       fs.writeFileSync(scriptPath, content, { mode: 0o755 });
