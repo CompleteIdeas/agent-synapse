@@ -52,8 +52,12 @@ npm install
 cp synapse.workspaces.example.json synapse.workspaces.json
 # Edit synapse.workspaces.json: set projectDir to your project path
 
-# 4. Launch everything (AWM + coordination + agents) in Windows Terminal
-./launchers/start-all.bat
+# 4. Run setup (registers plugin marketplace + installs AWM channel plugin)
+./setup.bat
+
+# 5. Launch everything (AWM + coordination + agents) in Windows Terminal
+./launchers/start-all-work.bat      # Work workspace (5 agents)
+./launchers/start-all-personal.bat  # Personal workspace (4 agents)
 
 # Or launch step by step:
 ./launchers/start-services.bat                    # Start AWM + coordination
@@ -70,22 +74,32 @@ agent-synapse/
 │   ├── awm/                 # Git submodule → AgentWorkingMemory
 │   │   ├── src/             # Memory + coordination (activation, salience, MCP)
 │   │   └── ...              # See github.com/CompleteIdeas/agent-working-memory
+│   ├── synapse-push/        # Channel server — pushes assignments to idle workers
+│   │   └── dist/channel-server.js  # MCP server with claude/channel capability
 │   ├── coordinator/         # Legacy coordinator (deprecated — use AWM coordination)
 │   ├── task-manager/        # Sprint/task tracker service (port 8420, optional)
 │   └── memory-client/       # Thin HTTP client for AWM (programmatic access)
-├── agents/                  # Claude Code agent definitions
+├── marketplace/             # Local Claude Code plugin marketplace
+│   ├── .claude-plugin/marketplace.json  # Marketplace manifest
+│   └── plugins/awm/         # AWM channel plugin (references synapse-push)
+├── .claude/agents/          # Claude Code agent definitions
 │   ├── worker.md            # Generic worker — adapts role per task
+│   ├── dev-lead.md          # Dev-lead — scoping, architecture, task breakdown
 │   └── coordinator.md       # Autonomous coordinator — manages the hive
 ├── hooks/                   # Claude Code hooks
 │   ├── check-file-lock.sh   # PreToolUse: blocks edits on locked files
 │   ├── coordinator-watchdog.sh  # Notification: detects stalled coordinator loop
 │   ├── pre-compact.sh       # PreCompact: saves state before context compaction
 │   └── worker-cleanup.sh    # SessionEnd: releases locks on exit
-├── launchers/               # Start scripts (Windows)
-│   ├── start-all.bat        # Launch AWM + coordinator + workers
+├── launchers/               # Start scripts (Windows + Unix)
+│   ├── start-all-work.bat   # Launch work workspace hive
+│   ├── start-all-personal.bat  # Launch personal workspace hive
 │   ├── start-worker.bat     # Launch a single agent
-│   ├── launch-hive.cjs      # Programmatic hive launcher
+│   ├── launch-hive.cjs      # Programmatic hive launcher (reads synapse.workspaces.json)
 │   └── spawn-worker.cjs     # On-demand worker spawner
+├── setup.bat                # One-click setup (marketplace + plugin install)
+├── synapse.config.json      # Service discovery, models, channels, loop timers
+├── synapse.workspaces.json  # Per-user workspace paths (gitignored)
 ├── bin/synapse.js           # CLI: npx agent-synapse <command>
 └── examples/                # Example configurations
 ```
@@ -146,11 +160,38 @@ The coordinator runs autonomously:
 1. Checks in, discovers workers via `GET /workers`
 2. Pulls tasks from a task database or sprint plans
 3. Assigns work to idle workers
-4. Monitors progress every 3 minutes
+4. Monitors progress every 2 minutes (MONITOR tick)
 5. Detects new workers joining and assigns them immediately
 6. Scans live sites for health issues
 7. Reports significant events to the user
 8. Never stops until SHUTDOWN
+
+### Push Channels
+
+Workers need to be woken up when assignments arrive. Without channels, idle workers sit at the Claude Code prompt forever. AgentSynapse solves this with a **push channel** — an MCP server that pushes assignment notifications directly into idle Claude Code sessions.
+
+**How it works:**
+
+1. Each worker launches with `--channels plugin:awm@agentsynapse`
+2. Claude Code spawns the AWM channel server (MCP with `claude/channel` capability)
+3. The channel server listens on an HTTP port for `POST /push` from the coordinator
+4. When the coordinator assigns work, synapse-push sends a notification
+5. The notification arrives in Claude Code as `<channel source="awm">` — waking the worker
+
+**Setup (one-time per machine):**
+
+```bash
+# Run setup.bat — registers the local marketplace and installs the AWM channel plugin
+./setup.bat
+
+# What it does:
+#   1. claude plugin marketplace add ./marketplace  — registers "agentsynapse" marketplace
+#   2. claude plugin install awm@agentsynapse       — installs the channel plugin
+```
+
+**Why a plugin?** Claude Code requires `--dangerously-load-development-channels` for raw `server:` entries, which shows an interactive confirmation prompt — impossible for automated launches. Packaging as a plugin and using `--channels plugin:awm@agentsynapse` bypasses this prompt entirely.
+
+**Fallback:** If channels are unavailable, workers use a foreground polling loop (exponential backoff: 15s→30s→60s intervals, ~20 min per loop cycle).
 
 ### File Lock Hook
 
