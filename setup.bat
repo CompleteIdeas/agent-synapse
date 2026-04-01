@@ -47,6 +47,16 @@ if %errorlevel% equ 0 (
     echo  ========================================
     echo  Setup complete!
     echo.
+    echo  IMPORTANT — Claude Team admin must configure:
+    echo    Go to: https://claude.ai/admin-settings/claude-code
+    echo    Add to managed settings:
+    echo      "channelsEnabled": true
+    echo      "allowedChannelPlugins": [
+    echo        { "marketplace": "agentsynapse", "plugin": "awm" }
+    echo      ]
+    echo.
+    echo  Without this, agents won't receive push notifications.
+    echo.
     echo  To launch the work hive:
     echo    %SYNAPSE_DIR%\launchers\start-all-work.bat
     echo.

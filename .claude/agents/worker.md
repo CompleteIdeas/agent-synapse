@@ -175,48 +175,26 @@ This surfaces decisions other workers/coordinator have written. Read the results
 - If `"assignment": { ... }` with a `"task"` field → you have work. Continue to step 4.
 - If `"assignment": null` → **enter the idle ready loop.**
 
-#### Idle Ready Loop (waiting for coordinator to assign work)
+#### Idle Mode (waiting for channel push)
 
-> **⚠ THIS LOOP IS MANDATORY, NOT OPTIONAL.** You MUST keep polling until you get work, a SHUTDOWN command, or 30 minutes elapse. Do NOT break out of this loop to ask the user what to do. Do NOT say "standing by" or "ready for work" or "what would you like me to work on?" — the coordinator assigns work, not the user. Your ONLY job when idle is to KEEP POLLING SILENTLY.
+Assignments arrive via **channel push** (`← awm:` messages). You do NOT need to poll actively. When idle:
 
-**CRITICAL: Use a FOREGROUND blocking loop, NOT background tasks.** Background tasks complete while you're at the prompt and get lost. Use this exact pattern:
+1. **Stay at the prompt.** Do NOT exit, do NOT ask the user for work, do NOT say "standing by" or "what would you like me to work on?" The coordinator assigns work via channel push — not the user.
 
+2. **When you receive a `← awm:` channel message** — it means you have an assignment. Call `POST /next` to get the assignment details, then start working (step 4).
+
+3. **Fallback heartbeat every 15 minutes** — run a single background check to stay registered and catch any missed pushes:
 ```bash
-# Poll loop — runs in foreground, blocks until assignment or timeout
-for i in $(seq 1 30); do
-  if [ $i -le 4 ]; then INTERVAL=15; elif [ $i -le 14 ]; then INTERVAL=30; else INTERVAL=60; fi
-  sleep $INTERVAL
-  RESULT=$(curl -s -X POST http://127.0.0.1:8400/next -H "Content-Type: application/json" -d "{\"name\":\"$WORKER_NAME\",\"role\":\"worker\",\"workspace\":\"$WORKSPACE\"}")
-  ASSIGNMENT=$(echo "$RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));if(d.assignment)process.stdout.write(JSON.stringify(d.assignment))" 2>/dev/null)
-  if [ -n "$ASSIGNMENT" ]; then echo "ASSIGNMENT_RECEIVED: $ASSIGNMENT"; break; fi
-  COMMAND=$(echo "$RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));if(d.command&&d.command.action)process.stdout.write(d.command.action)" 2>/dev/null)
-  if [ "$COMMAND" = "SHUTDOWN" ]; then echo "SHUTDOWN_RECEIVED"; break; fi
-done
+sleep 900 && curl -s -X POST http://127.0.0.1:8400/next -H "Content-Type: application/json" -d "{\"name\":\"$WORKER_NAME\",\"role\":\"worker\",\"workspace\":\"$WORKSPACE\"}"
 ```
+Run this with `run_in_background: true`. If it returns an assignment, process it. If null, schedule another 15-min heartbeat. This is a safety net — channel push is the primary delivery mechanism.
 
-**Run this as a single Bash tool call (NOT run_in_background).** It blocks your session for up to 30 iterations (~20 minutes), polling with exponential backoff. When it returns:
+4. **NEVER exit.** Sessions run for 4-8 hours. Do not stop after any timeout. Do not checkout. Only stop on explicit SHUTDOWN command.
 
-- Output contains `ASSIGNMENT_RECEIVED:` → parse the assignment JSON and start working (step 4)
-- Output contains `SHUTDOWN_RECEIVED` → follow shutdown protocol
-- Loop completed 30 iterations with no assignment → write `memory_checkpoint`, output "Worker $WORKER_NAME — idle 20 min, no assignments. Restarting poll loop." and run the loop again
-
-**AWM sync between poll loops** (not inside the loop — do this when the loop exits without an assignment):
+5. **AWM sync** — every 2-3 heartbeats (~30-45 min), recall AWM to stay current:
 ```
 memory_recall: "project decisions blockers current status"
 ```
-
-**SILENCE RULE: Do NOT output text during idle polling.** The ONLY acceptable outputs are:
-- "Got assignment: [task]" — when work arrives
-- "Received SHUTDOWN command" — on shutdown
-- "Worker $WORKER_NAME — idle 20 min, no assignments. Restarting poll loop." — at the 20-minute checkpoint
-
-If you catch yourself about to type "No assignment yet" or "Want me to do something?" — STOP. Run the poll loop again.
-
-**After 30 minutes total:**
-1. Call `memory_task_end` with "No work after 30 min — stopping"
-2. `POST /checkout`
-3. Output: **"Worker $WORKER_NAME — no work for 30 min. Stopping. Relaunch when needed."**
-4. STOP.
 
 ### 4. Read Your Assignment and Adapt
 

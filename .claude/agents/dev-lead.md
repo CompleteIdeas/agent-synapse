@@ -156,30 +156,23 @@ Channel sessions are auto-cleaned on checkout. Not yet active — polling remain
 
 - If assignment exists → do the research (step 4)
 - If command is active (BUILD_FREEZE, SHUTDOWN) → obey it
-- If NO assignment → **enter the idle ready loop (MANDATORY — not optional):**
+- If NO assignment → **enter idle mode:**
 
-> **⚠ THIS LOOP IS MANDATORY.** You MUST keep polling until you get work, a SHUTDOWN command, or 30 minutes elapse. Do NOT break out of this loop to ask the user what to do. Do NOT say "standing by" or "ready for work" or "what would you like me to work on?" — the coordinator assigns work, not the user. Your ONLY job when idle is to KEEP POLLING SILENTLY.
+#### Idle Mode (waiting for channel push)
 
-**CRITICAL: Use a FOREGROUND blocking loop, NOT background tasks.** Background tasks complete while you're at the prompt and get lost. Use this exact pattern:
+Assignments arrive via **channel push** (`← awm:` messages). You do NOT need to poll actively. When idle:
 
+1. **Stay at the prompt.** Do NOT exit, do NOT ask the user for work. The coordinator assigns work via channel push.
+
+2. **When you receive a `← awm:` channel message** — you have an assignment. Call `POST /next` to get details, then start researching (step 4).
+
+3. **Fallback heartbeat every 15 minutes** — single background check to stay registered:
 ```bash
-# Poll loop — runs in foreground, blocks until assignment or timeout
-for i in $(seq 1 30); do
-  INTERVAL=30
-  sleep $INTERVAL
-  RESULT=$(curl -s -X POST http://127.0.0.1:8400/next -H "Content-Type: application/json" -d "{\"name\":\"Dev-Lead\",\"role\":\"dev-lead\",\"workspace\":\"$WORKSPACE\"}")
-  ASSIGNMENT=$(echo "$RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));if(d.assignment)process.stdout.write(JSON.stringify(d.assignment))" 2>/dev/null)
-  if [ -n "$ASSIGNMENT" ]; then echo "ASSIGNMENT_RECEIVED: $ASSIGNMENT"; break; fi
-  COMMAND=$(echo "$RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));if(d.command&&d.command.action)process.stdout.write(d.command.action)" 2>/dev/null)
-  if [ "$COMMAND" = "SHUTDOWN" ]; then echo "SHUTDOWN_RECEIVED"; break; fi
-done
+sleep 900 && curl -s -X POST http://127.0.0.1:8400/next -H "Content-Type: application/json" -d '{"name":"Dev-Lead","role":"dev-lead","workspace":"WORK"}'
 ```
+Run with `run_in_background: true`. Safety net only — channel push is primary.
 
-**Run this as a single Bash tool call (NOT run_in_background).** It blocks your session for up to 30 iterations (~15 min). When it returns:
-- Output contains `ASSIGNMENT_RECEIVED:` → parse the assignment JSON and do the research (step 4)
-- Output contains `SHUTDOWN_RECEIVED` → follow shutdown protocol
-- Loop completed with no assignment → recall AWM for context, then run the loop again
-- After 30 min total → `memory_task_end`, checkout, output status, STOP
+4. **NEVER exit.** Sessions run 4-8 hours. Only stop on explicit SHUTDOWN command.
 
 ### 4. Do the research
 

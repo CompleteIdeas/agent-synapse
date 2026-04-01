@@ -191,7 +191,20 @@ Workers need to be woken up when assignments arrive. Without channels, idle work
 
 **Why a plugin?** Claude Code requires `--dangerously-load-development-channels` for raw `server:` entries, which shows an interactive confirmation prompt — impossible for automated launches. Packaging as a plugin and using `--channels plugin:awm@agentsynapse` bypasses this prompt entirely.
 
-**Fallback:** If channels are unavailable, workers use a foreground polling loop (exponential backoff: 15s→30s→60s intervals, ~20 min per loop cycle).
+**Idle behavior:** Agents stay at the prompt waiting for `← awm:` push notifications. A lightweight heartbeat every 15 minutes keeps them registered as a fallback. Agents never exit — sessions run 4-8 hours.
+
+**Admin requirement (Claude Team/Enterprise):** An org admin must add the plugin to the approved channels allowlist in managed settings at [claude.ai/admin-settings/claude-code](https://claude.ai/admin-settings/claude-code):
+
+```json
+{
+  "channelsEnabled": true,
+  "allowedChannelPlugins": [
+    { "marketplace": "agentsynapse", "plugin": "awm" }
+  ]
+}
+```
+
+Without this, Claude Code receives push notifications but silently drops them.
 
 ### File Lock Hook
 
