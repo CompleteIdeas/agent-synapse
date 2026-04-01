@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "awm": {
+      "command": "node",
+      "args": ["C:/Users/robert/Personal-Projects/AgentSynapse/packages/synapse-push/dist/channel-server.js"]
+    }
+  }
+}

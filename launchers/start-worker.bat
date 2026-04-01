@@ -1,16 +1,13 @@
 @echo off
 :: Usage: start-worker.bat [worker-name] [project-dir]
-:: Must be run from AgentSynapse directory (where .claude/agents/ lives)
 ::
 :: Environment variables (set by launch-hive.cjs):
 ::   WORKER_NAME   — Agent name (Worker-A, Dev-Lead, coordinator)
 ::   PROJECT_DIR   — Target project directory
+::   SYNAPSE_DIR   — AgentSynapse root directory (for absolute paths)
 ::   WORKSPACE     — Workspace name (PERSONAL, WORK)
 ::   AGENT_MODEL   — Claude model override (opus, sonnet). If set, passes --model to claude CLI.
-::
-:: --bare flag note: Do NOT use --bare for hive agents — they need hooks
-:: (file-lock checking, pre-compact, session-end cleanup). --bare is only
-:: for scripted one-shot -p calls via spawn-worker.cjs.
+::   CHANNELS_ENABLED — If set, enables push channels via --channels plugin:awm@agentsynapse
 
 :: Get args
 if not "%~1"=="" set WORKER_NAME=%~1
@@ -32,7 +29,6 @@ if not defined WORKSPACE set WORKSPACE=DEFAULT
 :: Agent defs are copied to PROJECT_DIR by launch-hive.cjs — cd there
 :: so Claude Code loads the correct project context (skills, CLAUDE.md, git)
 cd /d "%PROJECT_DIR%"
-:: The PROJECT_DIR is passed to Claude via system prompt
 
 :: Check AWM is running
 curl -s http://127.0.0.1:8400/health >nul 2>&1
@@ -42,18 +38,15 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: Build --model flag if AGENT_MODEL is set (set by launch-hive.cjs from synapse.config.json)
+:: Build --model flag if AGENT_MODEL is set
 set MODEL_FLAG=
 if defined AGENT_MODEL set MODEL_FLAG=--model %AGENT_MODEL%
 
-:: Build channel flags if CHANNELS_ENABLED is set (set by launch-hive.cjs from synapse.config.json)
-:: Uses SYNAPSE_DIR (absolute path, set by launch-hive.cjs temp scripts) for channel-server.js.
-:: The MCP server name "awm" in --mcp-config must match "server:awm" in the channels flag.
+:: Build channel flags — AWM channel plugin installed via marketplace
+:: No interactive prompt with plugin:awm@agentsynapse (unlike server:awm)
 set CHANNELS_FLAG=
 if defined CHANNELS_ENABLED (
-    set CHANNEL_MCP_FILE=%TEMP%\awm-channel-mcp-%WORKER_NAME%.json
-    node -e "const p=require('path'),f=require('fs');f.writeFileSync(process.env.CHANNEL_MCP_FILE,JSON.stringify({mcpServers:{awm:{command:'node',args:[p.join(process.env.SYNAPSE_DIR,'packages','synapse-push','dist','channel-server.js')],env:{WORKER_NAME:process.env.WORKER_NAME,AWM_CHANNEL_PORT:process.env.AWM_CHANNEL_PORT||''}}}}))"
-    set CHANNELS_FLAG=--mcp-config "%CHANNEL_MCP_FILE%" --channels server:awm
+    set CHANNELS_FLAG=--channels plugin:awm@agentsynapse
 )
 
 :: Handle coordinator

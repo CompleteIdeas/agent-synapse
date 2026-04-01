@@ -1,0 +1,15 @@
+{
+  "name": "agentsynapse",
+  "description": "AgentSynapse local plugins for multi-agent hive coordination",
+  "owner": {
+    "name": "Robert Winter"
+  },
+  "plugins": [
+    {
+      "name": "awm",
+      "description": "Agent Working Memory - Push channel for multi-agent hive coordination",
+      "source": "./plugins/awm",
+      "category": "development"
+    }
+  ]
+}

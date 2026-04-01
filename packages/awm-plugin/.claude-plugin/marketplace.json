@@ -1,0 +1,12 @@
+{
+  "name": "agentsynapse",
+  "description": "AgentSynapse local plugins",
+  "plugins": [
+    {
+      "name": "awm",
+      "description": "Agent Working Memory - Push channel for multi-agent hive coordination",
+      "version": "1.0.0",
+      "source": ".."
+    }
+  ]
+}

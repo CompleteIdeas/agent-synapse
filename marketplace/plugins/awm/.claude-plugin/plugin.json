@@ -1,0 +1,17 @@
+{
+  "name": "awm",
+  "description": "Agent Working Memory - Push channel for multi-agent hive coordination via AgentSynapse",
+  "version": "1.0.0",
+  "author": {
+    "name": "Robert Winter"
+  },
+  "homepage": "https://github.com/CompleteIdeas/agent-synapse",
+  "repository": "https://github.com/CompleteIdeas/agent-synapse",
+  "license": "Apache-2.0",
+  "mcpServers": "./.mcp.json",
+  "channels": [
+    {
+      "server": "awm"
+    }
+  ]
+}
