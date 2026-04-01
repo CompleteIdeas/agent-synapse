@@ -142,7 +142,7 @@ Real-time coordination via REST API:
 
 ### Workers
 
-Workers are generic. A single `worker.md` agent definition handles:
+Workers are generic and idle at the prompt until woken by channel push. A single `worker.md` agent definition handles:
 
 - Coding, building, implementing
 - Code review and auditing
@@ -151,20 +151,30 @@ Workers are generic. A single `worker.md` agent definition handles:
 - Testing and validation
 - Refactoring and migration
 
-The task description tells the worker what role to play. Worker-A might code one task and review the next.
+The task description tells the worker what role to play. Worker-A might code one task and review the next. Workers never exit — sessions run 4-8 hours. A 15-minute heartbeat keeps them registered as a fallback.
 
 ### Coordinator
 
-The coordinator runs autonomously:
+The coordinator runs autonomously and dispatches work via channel push:
 
 1. Checks in, discovers workers via `GET /workers`
-2. Pulls tasks from a task database or sprint plans
-3. Assigns work to idle workers
-4. Monitors progress every 2 minutes (MONITOR tick)
+2. Pulls tasks from a task database, sprint plans, or user instructions
+3. Assigns work with `POST /assign` using `worker_name` field — synapse-push automatically delivers a `← awm:` notification to wake the worker
+4. Monitors progress via 5-minute fallback tick and `← awm:` completion notifications
 5. Detects new workers joining and assigns them immediately
-6. Scans live sites for health issues
-7. Reports significant events to the user
-8. Never stops until SHUTDOWN
+6. Reports significant events to the user
+7. Never stops until SHUTDOWN
+
+**Assignment flow:**
+```bash
+# Coordinator assigns — synapse-push auto-pushes to worker's channel
+curl -s -X POST http://127.0.0.1:8400/assign \
+  -H "Content-Type: application/json" \
+  -d '{"worker_name":"Worker-A","task":"Implement feature X","workspace":"WORK"}'
+# → Worker-A receives ← awm: notification, wakes up, starts working
+```
+
+**Critical:** Use `worker_name` field — NOT `agentName`, `agent_name`, or `agent_id`. Wrong field names are silently stripped, causing assignments to go undelivered.
 
 ### Push Channels
 
@@ -220,11 +230,41 @@ A `PreToolUse` hook that fires on every `Edit` and `Write` call:
 
 To use AgentSynapse in your own project:
 
-1. **Install and start the services** (AWM with coordination enabled)
-2. **Copy `agents/` into your `.claude/agents/`** — customize task descriptions for your domain
-3. **Copy `hooks/check-file-lock.sh` into your `.claude/hooks/`** — add to `.claude/settings.json`
-4. **Configure MCP** in your Claude Code settings to connect to the memory server
-5. **Customize launchers** for your project paths
+1. **Clone and install**
+   ```bash
+   git clone https://github.com/CompleteIdeas/agent-synapse.git
+   cd agent-synapse
+   git submodule update --init
+   npm install
+   ```
+
+2. **Configure workspaces** — copy and edit `synapse.workspaces.example.json` to `synapse.workspaces.json` with your project paths
+
+3. **Run setup** — registers marketplace and installs the AWM channel plugin
+   ```bash
+   ./setup.bat
+   ```
+
+4. **Configure Claude Team admin settings** — required for channel push to work
+   - Go to [claude.ai/admin-settings/claude-code](https://claude.ai/admin-settings/claude-code)
+   - Add to managed settings:
+     ```json
+     {
+       "channelsEnabled": true,
+       "allowedChannelPlugins": [
+         { "marketplace": "agentsynapse", "plugin": "awm" }
+       ]
+     }
+     ```
+
+5. **Launch the hive**
+   ```bash
+   ./launchers/start-all-work.bat      # 5 agents in Windows Terminal tabs
+   ```
+
+6. **Customize agent definitions** — edit `.claude/agents/coordinator.md`, `dev-lead.md`, `worker.md` for your domain
+
+7. **Add file lock hooks** — copy `hooks/check-file-lock.sh` into your project's `.claude/hooks/` and reference in `.claude/settings.json`
 
 ## License
 
