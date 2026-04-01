@@ -53,7 +53,7 @@ set CHANNELS_FLAG=
 if defined CHANNELS_ENABLED (
     set CHANNEL_MCP_FILE=%TEMP%\awm-channel-mcp-%WORKER_NAME%.json
     node -e "const p=require('path'),f=require('fs');f.writeFileSync(process.env.CHANNEL_MCP_FILE,JSON.stringify({mcpServers:{awm:{command:'node',args:[p.join(process.env.SYNAPSE_DIR,'packages','synapse-push','dist','channel-server.js')],env:{WORKER_NAME:process.env.WORKER_NAME,AWM_CHANNEL_PORT:process.env.AWM_CHANNEL_PORT||''}}}}))"
-    set CHANNELS_FLAG=--dangerously-load-development-channels server:awm --mcp-config "%CHANNEL_MCP_FILE%"
+    set CHANNELS_FLAG=--mcp-config "%CHANNEL_MCP_FILE%" --channels server:awm
 )
 
 :: Handle coordinator
