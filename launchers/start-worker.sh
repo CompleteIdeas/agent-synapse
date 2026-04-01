@@ -42,10 +42,20 @@ fi
 MODEL_FLAG=""
 [ -n "$AGENT_MODEL" ] && MODEL_FLAG="--model $AGENT_MODEL"
 
-# Channel flags disabled — --dangerously-load-development-channels is not a valid
-# Claude Code CLI flag in v2.1.89. Agents use /next polling instead.
-# TODO: Re-enable when Claude Code adds native channel support.
+# Build channel flags if CHANNELS_ENABLED is set (set by launch-hive.cjs from synapse.config.json)
+# Uses SYNAPSE_DIR (absolute path, set by launch-hive.cjs temp scripts) for channel-server.js.
+# The MCP server name "awm" in --mcp-config must match "server:awm" in the channels flag.
 CHANNELS_FLAG=""
+if [ -n "$CHANNELS_ENABLED" ]; then
+  if [ -z "$AWM_CHANNEL_PORT" ]; then
+    AWM_CHANNEL_PORT=$((50000 + RANDOM % 9999))
+    export AWM_CHANNEL_PORT
+  fi
+  CHANNEL_MCP_FILE=$(mktemp /tmp/awm-channel-mcp-XXXXXX.json)
+  CHANNEL_SERVER_JS="${SYNAPSE_DIR}/packages/synapse-push/dist/channel-server.js"
+  node -e "const f=require('fs');f.writeFileSync('$CHANNEL_MCP_FILE',JSON.stringify({mcpServers:{awm:{command:'node',args:['$CHANNEL_SERVER_JS'],env:{WORKER_NAME:'$WORKER_NAME',AWM_CHANNEL_PORT:'$AWM_CHANNEL_PORT'}}}}))"
+  CHANNELS_FLAG="--dangerously-load-development-channels server:awm --mcp-config $CHANNEL_MCP_FILE"
+fi
 
 # Handle coordinator
 if [ "${WORKER_NAME,,}" = "coordinator" ]; then

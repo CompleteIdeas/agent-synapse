@@ -28,7 +28,7 @@
   },
   "channels": {
     "_doc": "MCP push channels (Claude Code v2.1.80+, requires claude.ai Teams with channelsEnabled). When true, launchers pass --dangerously-load-development-channels server:awm and set AWM_CHANNEL_PORT per worker. The channel server (synapse-push/dist/channel-server.js) is spawned by Claude Code and receives assignments via HTTP from synapse-push, then emits notifications/claude/channel to wake the agent. Graceful degradation: if channels are not supported by the org, Claude Code does not spawn the server and workers fall back to /next polling automatically.",
-    "enabled": false,
+    "enabled": true,
     "auto_register": true
   },
   "stale_threshold_seconds": 120,
