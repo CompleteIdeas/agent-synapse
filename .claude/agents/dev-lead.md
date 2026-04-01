@@ -160,16 +160,26 @@ Channel sessions are auto-cleaned on checkout. Not yet active — polling remain
 
 > **⚠ THIS LOOP IS MANDATORY.** You MUST keep polling until you get work, a SHUTDOWN command, or 30 minutes elapse. Do NOT break out of this loop to ask the user what to do. Do NOT say "standing by" or "ready for work" or "what would you like me to work on?" — the coordinator assigns work, not the user. Your ONLY job when idle is to KEEP POLLING SILENTLY.
 
-**Poll every 30s** with a single Bash call using `run_in_background: true`:
+**CRITICAL: Use a FOREGROUND blocking loop, NOT background tasks.** Background tasks complete while you're at the prompt and get lost. Use this exact pattern:
+
 ```bash
-sleep 30 && curl -s -X POST http://127.0.0.1:8400/next -H "Content-Type: application/json" -d '{"name":"Dev-Lead","role":"dev-lead","workspace":"$WORKSPACE"}'
+# Poll loop — runs in foreground, blocks until assignment or timeout
+for i in $(seq 1 30); do
+  INTERVAL=30
+  sleep $INTERVAL
+  RESULT=$(curl -s -X POST http://127.0.0.1:8400/next -H "Content-Type: application/json" -d "{\"name\":\"Dev-Lead\",\"role\":\"dev-lead\",\"workspace\":\"$WORKSPACE\"}")
+  ASSIGNMENT=$(echo "$RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));if(d.assignment)process.stdout.write(JSON.stringify(d.assignment))" 2>/dev/null)
+  if [ -n "$ASSIGNMENT" ]; then echo "ASSIGNMENT_RECEIVED: $ASSIGNMENT"; break; fi
+  COMMAND=$(echo "$RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));if(d.command&&d.command.action)process.stdout.write(d.command.action)" 2>/dev/null)
+  if [ "$COMMAND" = "SHUTDOWN" ]; then echo "SHUTDOWN_RECEIVED"; break; fi
+done
 ```
 
-**When the background call completes, read the output and act:**
-- If assignment arrives → do the research (step 4)
-- If assignment is null → **immediately issue the next poll call**. Do NOT stop. Do NOT ask the user. Do NOT output anything. Just poll again.
-- Every 2-3 cycles, recall AWM: `memory_recall: "project decisions blockers current status"` — stay current on what the hive is doing
-- After 30 min with no assignment → `memory_task_end`, checkout, output status, STOP
+**Run this as a single Bash tool call (NOT run_in_background).** It blocks your session for up to 30 iterations (~15 min). When it returns:
+- Output contains `ASSIGNMENT_RECEIVED:` → parse the assignment JSON and do the research (step 4)
+- Output contains `SHUTDOWN_RECEIVED` → follow shutdown protocol
+- Loop completed with no assignment → recall AWM for context, then run the loop again
+- After 30 min total → `memory_task_end`, checkout, output status, STOP
 
 ### 4. Do the research
 
