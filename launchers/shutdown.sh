@@ -92,7 +92,7 @@ echo
 echo " Stopping coordinator..."
 
 # Kill processes on known ports
-for PORT in 8400 8420; do
+for PORT in 8400; do
   PIDS=$(lsof -ti:$PORT 2>/dev/null)
   if [ -n "$PIDS" ]; then
     for PID in $PIDS; do

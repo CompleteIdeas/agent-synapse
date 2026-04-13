@@ -18,17 +18,5 @@ services:
       start_period: 10s
       retries: 3
 
-  task-manager:
-    build: packages/task-manager
-    ports: ["127.0.0.1:8420:8420"]
-    volumes: ["./data:/data"]
-    environment:
-      TM_DB_PATH: /data/task.db
-      TM_API_KEY: ${TM_API_KEY:-}
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8420/health"]
-      interval: 30s
-      timeout: 5s
-      start_period: 10s
-      retries: 3
+  ## task-manager: legacy — now consolidated into AWM on port 8400
+  ## The packages/task-manager code still exists but is no longer run as a separate service.

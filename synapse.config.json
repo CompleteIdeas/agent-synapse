@@ -6,7 +6,7 @@
   "services": {
     "coordinator": "http://127.0.0.1:8400",
     "memory": "http://127.0.0.1:8400",
-    "task_manager": "http://127.0.0.1:8420"
+    "task_manager": "http://127.0.0.1:8400"
   },
   "_note_coordinator": "Coordinator is now part of AWM (port 8400) when AWM_COORDINATION=true. The separate packages/coordinator/ is deprecated.",
   "coordination_endpoints": {

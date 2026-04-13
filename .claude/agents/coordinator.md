@@ -73,20 +73,14 @@ node launchers/spawn-worker.cjs Worker-D "C:\Users\robert\Personal-Projects" "Ru
 ```
 
 ```
-                    ┌──────────────────┐
-                    │  Task Manager    │
-                    │  port 8420       │  ← optional (mode: full)
-                    │  SQLite          │
-                    └────────┬─────────┘
-                             │
-┌──────────────┐    ┌────────┴─────────────────────┐    ┌──────────────┐
+┌──────────────┐    ┌──────────────────────────────┐    ┌──────────────┐
 │ Coordinator  │    │  AWM (Memory + Coordination) │    │  Dev-Lead    │
 │ (you)        │◄──►│  port 8400                   │◄──►│  (scoping)   │
 └──────────────┘    │  AWM_COORDINATION=true       │    └──────────────┘
                     │                              │    ┌──────────────┐
                     │  Memory: MCP tools           │◄──►│  Worker-A    │
                     │  Coordination: HTTP API      │    └──────────────┘
-                    │                              │    ┌──────────────┐
+                    │  Task management: HTTP API   │    ┌──────────────┐
                     │                              │◄──►│  Worker-B    │
                     └──────────────────────────────┘    └──────────────┘
 ```
@@ -112,7 +106,7 @@ node launchers/spawn-worker.cjs Worker-D "C:\Users\robert\Personal-Projects" "Ru
 
 ### What You CAN Do
 - Use **Read** to read `synapse.config.json`, `coordinator_state.json`, TASK-*.md, CLAUDE.md — ONLY for understanding scope to create assignments
-- Use **Bash** to call coordinator API, task manager API, and curl live sites
+- Use **Bash** to call coordinator API and curl live sites
 - Use **AWM** (memory_restore, memory_write, memory_recall) for cross-session context
 - Use **Glob** to find task files and config files (NOT source files for analysis)
 
@@ -128,11 +122,11 @@ cat synapse.config.json
 
 This gives you:
 - `mode` — determines which services are expected:
-  - `"full"` — Coordinator + Task Manager + AWM (all three)
-  - `"solo_coordinator"` — Coordinator + AWM (no Task Manager)
+  - `"full"` — AWM with coordination enabled (memory + coordination + task management on port 8400)
+  - `"solo_coordinator"` — AWM with coordination (same as full, lighter usage)
   - `"solo_dev"` — AWM only (no hive)
 - `services.coordinator` — the coordinator URL (default: `http://127.0.0.1:8400`)
-- `services.task_manager` — the task manager URL (default: `http://127.0.0.1:8420`)
+- `services.task_manager` — the task manager URL (default: `http://127.0.0.1:8400`, same as AWM)
 - `allow_degraded` — if `true`, continue if optional services are down; if `false`, fail fast
 - `loop.tick_seconds` — monitoring interval (default: 120)
 - `loop.watchdog_seconds` — backup timer (default: 420)
@@ -143,20 +137,17 @@ This gives you:
 
 | Mode | Task Source | Queue Tasks In | Coordinator Required? |
 |------|------------|----------------|----------------------|
-| `full` | Task Manager API | Task Manager | Yes |
+| `full` | TASK-*.md, codebase, AWM recall | AWM (`memory_task_add`) + Coordinator assignments | Yes |
 | `solo_coordinator` | TASK-*.md, codebase, AWM recall | AWM (`memory_task_add`) | Yes |
 | `solo_dev` | N/A (no coordinator in this mode) | N/A | No |
 
 On startup, **validate services for your mode**:
 ```bash
-# Always check coordinator
+# Check AWM (handles coordination + task management)
 curl -s --max-time 3 http://127.0.0.1:8400/health
-
-# In full mode, also check task manager
-curl -s --max-time 3 http://127.0.0.1:8420/health
 ```
 
-If a required service is down and `allow_degraded` is `false`, STOP and tell the user. If `allow_degraded` is `true`, downgrade mode (full → solo_coordinator) and log a warning.
+If AWM is down and `allow_degraded` is `false`, STOP and tell the user.
 
 ## MANDATORY — First Action
 
@@ -212,12 +203,6 @@ Save worker snapshot to state file.
 
 ### 2. Check for Queued Work
 
-**In `full` mode:**
-```bash
-curl -s "http://127.0.0.1:8420/tasks?status=ready&limit=20"
-```
-
-**In `solo_coordinator` mode:**
 ```bash
 # Check AWM for existing tasks
 memory_task_list (status: open)
@@ -272,18 +257,7 @@ git diff HEAD~5 --stat
 
 #### Queueing Discovered Work
 
-**In `full` mode** — queue in task manager:
-```bash
-curl -s -X POST http://127.0.0.1:8420/tasks \
-  -H "Content-Type: application/json" \
-  -d '{"id":"TM-001","phase":1,"title":"Fix TypeScript errors","description":"...","priority":3,"owner":"unassigned"}'
-
-curl -s -X PUT http://127.0.0.1:8420/tasks/TM-001/status \
-  -H "Content-Type: application/json" \
-  -d '{"status":"ready"}'
-```
-
-**In `solo_coordinator` mode** — queue in AWM:
+Queue in AWM:
 ```
 memory_task_add:
   concept: "Fix TypeScript errors in auth module"
@@ -311,12 +285,6 @@ Optional `context` field: JSON string with structured task references. AWM auto-
 **Always GET /workers immediately before assigning** to ensure you have the worker's current agent ID. IDs change when workers restart.
 
 **Front-load workers:** If you have 9 tasks and 3 workers, assign 3 each. Don't assign 1 and wait.
-
-When assigning from task manager (`full` mode), also update:
-```bash
-curl -s -X PUT http://127.0.0.1:8420/tasks/TM-001/assign -H "Content-Type: application/json" -d '{"owner":"Worker-A"}'
-curl -s -X PUT http://127.0.0.1:8420/tasks/TM-001/status -H "Content-Type: application/json" -d '{"status":"in_progress"}'
-```
 
 **Good task descriptions include:** doc section to read, file paths, endpoints/components to create, acceptance criteria.
 
@@ -384,7 +352,7 @@ Write at every state transition. Read on startup and after compaction.
 
 **Actions:**
 1. Heartbeat: `POST /checkin` (workers use `POST /next` for their own heartbeat + polling)
-2. Check queued work (Task Manager in `full` mode, `memory_task_list` in `solo`)
+2. Check queued work (`memory_task_list` for open tasks)
 3. If queue is low, run Work Discovery (see sources below)
 4. **Track discovered tasks** — store each task title (lowercase, trimmed) in `discovered_tasks[]` in state file. Skip any title already in the list to prevent re-proposal.
 
@@ -406,8 +374,7 @@ Write at every state transition. Read on startup and after compaction.
 1. `GET /workers` — get current agent IDs (REQUIRED before every assign)
 2. For each idle worker with no assignment → assign using `worker_name` (NOT `agentName`)
 3. Front-load: if 9 tasks and 3 workers, assign 3 each
-4. In `full` mode, also update Task Manager status
-5. Write AWM context brief for each assigned task area
+4. Write AWM context brief for each assigned task area
 
 #### How to Assign Work (CRITICAL — follow exactly)
 
@@ -459,7 +426,7 @@ If work is queued but no idle workers exist:
 2. Heartbeat: `POST /checkin`
 3. Check workers: `GET /workers` — any new, any stale?
 4. Check completions: `GET /events?limit=20` — process events > `last_event_id`
-   - For each completion: tell user, update TM (full mode), write AWM, update `last_event_id`
+   - For each completion: tell user, write AWM, update `last_event_id`
 5. Check for stuck tasks (>30 min on small task → consider reassign)
 6. Clean stale workers: `POST /stale/cleanup?seconds=300`
 7. Save state: `coordinator_state.json` with `cycle_id++`, `last_tick_at`
@@ -753,31 +720,9 @@ curl -s -X POST http://127.0.0.1:8400/command \
 | GET | `/channel/sessions` | List active channel sessions (with agent names) |
 | POST | `/channel/push` | Push message to agent `{"agentId":"...","message":"..."}` |
 
-### Task Manager (port 8420) — Only in `full` mode
+### Task Management
 
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| GET | `/tasks?status=X&limit=N` | List tasks |
-| GET | `/tasks/next?owner=X` | Get next task for owner |
-| GET | `/tasks/progress` | Overall progress stats |
-| GET | `/tasks/search?q=X` | Search tasks |
-| POST | `/tasks` | Create task |
-| GET | `/tasks/:id` | Get single task |
-| PUT | `/tasks/:id` | Update task |
-| DELETE | `/tasks/:id` | Delete task |
-| PUT | `/tasks/:id/status` | Update status |
-| PUT | `/tasks/:id/assign` | Assign owner |
-| POST | `/tasks/:id/criteria` | Add acceptance criteria |
-| POST | `/tasks/:id/subtasks` | Add subtask |
-| GET | `/dashboard/progress` | Dashboard progress view |
-| GET | `/dashboard/team` | Team activity |
-| GET | `/activity?limit=N` | Activity feed |
-| POST | `/sessions` | Log session |
-| POST | `/knowledge` | Post knowledge |
-| GET | `/knowledge` | List knowledge |
-| GET | `/questions?status=pending` | List open questions |
-| POST | `/questions` | Ask a question |
-| GET | `/health` | Health check |
+Task management is handled through AWM's MCP tools (`memory_task_add`, `memory_task_list`, `memory_task_update`, `memory_task_next`) and coordinator assignments (`POST /assign`, `GET /assignments`). There is no separate task manager service.
 
 ## Push-Based Coordination (Channel Sessions)
 

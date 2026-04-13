@@ -129,7 +129,7 @@ Flow: User → Coordinator → Dev Lead (scope) → Coordinator → Workers (exe
 ```bash
 curl -s -X POST http://127.0.0.1:8400/next \
   -H "Content-Type: application/json" \
-  -d '{"name":"Dev-Lead","role":"dev-lead","workspace":"PERSONAL"}'
+  -d '{"name":"Dev-Lead","role":"dev-lead","workspace":"WORK"}'
 ```
 
 The `/next` endpoint does checkin + command check + assignment poll in one call. It returns:
@@ -158,19 +158,29 @@ Channel sessions are auto-cleaned on checkout. Not yet active — polling remain
 - If command is active (BUILD_FREEZE, SHUTDOWN) → obey it
 - If NO assignment → **enter idle mode:**
 
-#### Idle Mode (waiting for channel push)
+#### Idle Mode (CronCreate polling loop)
 
-Assignments arrive via **channel push** (`← awm:` messages). You do NOT need to poll actively. When idle:
+When you have no assignment, set up a **CronCreate-based polling loop** — this is the PRIMARY mechanism for receiving work. Do NOT use `sleep` in bash.
 
-1. **Stay at the prompt.** Do NOT exit, do NOT ask the user for work. The coordinator assigns work via channel push.
-
-2. **When you receive a `← awm:` channel message** — you have an assignment. Call `POST /next` to get details, then start researching (step 4).
-
-3. **Fallback heartbeat every 15 minutes** — single background check to stay registered:
-```bash
-sleep 900 && curl -s -X POST http://127.0.0.1:8400/next -H "Content-Type: application/json" -d '{"name":"Dev-Lead","role":"dev-lead","workspace":"WORK"}'
+1. **Set up a 2-minute poll loop using CronCreate:**
 ```
-Run with `run_in_background: true`. Safety net only — channel push is primary.
+Use the CronCreate tool with:
+  cron: "*/2 * * * *"
+  prompt: "dev-lead-poll"
+  recurring: true
+```
+
+2. **When the "dev-lead-poll" prompt fires:**
+```bash
+curl -s -X POST http://127.0.0.1:8400/next \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Dev-Lead","role":"dev-lead","workspace":"WORK"}'
+```
+If `assignment` is non-null → cancel the loop (CronDelete) and start working.
+If `command` is active → obey it.
+If null → do nothing, wait for next tick.
+
+3. **Channel push is a bonus, not required.** If you receive a `← awm:` message, call `POST /next` immediately.
 
 4. **NEVER exit.** Sessions run 4-8 hours. Only stop on explicit SHUTDOWN command.
 
@@ -216,7 +226,7 @@ After completing a scoping task:
 
 | Method | Endpoint | Body / Query | Purpose |
 |--------|----------|-------------|---------|
-| **POST** | **`/next`** | `{"name":"Dev-Lead","role":"dev-lead","workspace":"PERSONAL"}` | **Combined checkin + command check + assignment poll (preferred)** |
+| **POST** | **`/next`** | `{"name":"Dev-Lead","role":"dev-lead","workspace":"WORK"}` | **Combined checkin + command check + assignment poll (preferred)** |
 | POST | `/checkin` | `{"name":"Dev-Lead","role":"dev-lead","pid":$$}` | Register or heartbeat (use /next instead for polling) |
 | POST | `/checkout` | `{"agentId":"UUID"}` | Sign off (end session) |
 | GET | `/assignment?agentId=UUID` | — | Get your current assignment |

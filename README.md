@@ -77,7 +77,7 @@ agent-synapse/
 │   ├── synapse-push/        # Channel server — pushes assignments to idle workers
 │   │   └── dist/channel-server.js  # MCP server with claude/channel capability
 │   ├── coordinator/         # Legacy coordinator (deprecated — use AWM coordination)
-│   ├── task-manager/        # Sprint/task tracker service (port 8420, optional)
+│   ├── task-manager/        # Sprint/task tracker (legacy — now consolidated into AWM on port 8400)
 │   └── memory-client/       # Thin HTTP client for AWM (programmatic access)
 ├── marketplace/             # Local Claude Code plugin marketplace
 │   ├── .claude-plugin/marketplace.json  # Marketplace manifest

@@ -119,33 +119,30 @@ async function main(): Promise<void> {
   const channelUrl = `http://127.0.0.1:${port}`;
   process.stderr.write(`[awm-channel] Listening on ${channelUrl} (worker=${WORKER_NAME})\n`);
 
-  // Self-register with coordinator — retry until the worker has checked in
+  // Self-register with coordinator — single call to /checkin with channelUrl
+  // The coordinator auto-registers the channel session when channelUrl is provided.
   const COORD_URL = process.env.AWM_COORDINATOR_URL ?? 'http://127.0.0.1:8400';
   const WORKSPACE = process.env.WORKSPACE ?? 'WORK';
 
   (async () => {
     for (let attempt = 0; attempt < 12; attempt++) {
       try {
-        // Get agentId by calling /next (also serves as a checkin)
-        const nextRes = await fetch(`${COORD_URL}/next`, {
+        const res = await fetch(`${COORD_URL}/checkin`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: WORKER_NAME, role: 'worker', workspace: WORKSPACE }),
+          body: JSON.stringify({
+            name: WORKER_NAME,
+            role: 'worker',
+            workspace: WORKSPACE,
+            channelUrl,
+          }),
         });
-        if (!nextRes.ok) throw new Error(`/next returned ${nextRes.status}`);
-        const nextData = await nextRes.json() as { agentId?: string };
-        if (!nextData.agentId) throw new Error('/next missing agentId');
-
-        // Register channel URL with coordinator
-        const regRes = await fetch(`${COORD_URL}/channel/register`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ agentId: nextData.agentId, channelId: channelUrl }),
-        });
-        if (!regRes.ok) throw new Error(`/channel/register returned ${regRes.status}`);
+        if (!res.ok) throw new Error(`/checkin returned ${res.status}`);
+        const data = await res.json() as { agentId?: string; action?: string };
+        if (!data.agentId) throw new Error('/checkin missing agentId');
 
         process.stderr.write(
-          `[awm-channel] Registered: ${WORKER_NAME} (${nextData.agentId}) → ${channelUrl}\n`
+          `[awm-channel] Registered: ${WORKER_NAME} (${data.agentId}) → ${channelUrl} [${data.action}]\n`
         );
         return; // success
       } catch (err) {

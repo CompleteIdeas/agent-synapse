@@ -103,7 +103,7 @@ echo.
 echo  Stopping coordinator...
 
 :: Find and kill node processes on known ports
-for %%P in (8400 8420 8400) do (
+for %%P in (8400) do (
     for /f "tokens=5" %%A in ('netstat -ano 2^>nul ^| findstr "LISTENING" ^| findstr ":%%P "') do (
         taskkill /F /PID %%A >nul 2>&1
         if not errorlevel 1 (

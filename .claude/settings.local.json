@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__agent-working-memory__memory_recall",
+      "mcp__agent-working-memory__memory_restore",
+      "mcp__agent-working-memory__memory_write",
+      "mcp__agent-working-memory__memory_checkpoint",
+      "mcp__agent-working-memory__memory_feedback",
+      "mcp__agent-working-memory__memory_retract",
+      "mcp__agent-working-memory__memory_supersede",
+      "mcp__agent-working-memory__memory_stats",
+      "mcp__agent-working-memory__memory_task_add",
+      "mcp__agent-working-memory__memory_task_begin",
+      "mcp__agent-working-memory__memory_task_end",
+      "mcp__agent-working-memory__memory_task_list",
+      "mcp__agent-working-memory__memory_task_next",
+      "mcp__agent-working-memory__memory_task_update",
+      "Bash(sqlite3:*)"
+    ]
+  }
+}

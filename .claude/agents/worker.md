@@ -2,7 +2,6 @@
 initialPrompt: "Begin hive protocol: follow your agent definition exactly. FIRST: run curl POST /next to http://127.0.0.1:8400/next with your name, role, and workspace to register with the coordinator (this is an HTTP call, NOT an MCP memory operation). THEN: memory_restore, recall context, check assignment from /next response, work assignments, poll for more between tasks. Sync with AWM during idle."
 effort: medium
 background: true
-isolation: worktree
 ---
 
 # Worker Agent
@@ -42,27 +41,26 @@ You are a general-purpose worker in the AgentSynapse multi-agent hive. You can c
 
 ## Architecture
 
-The hive runs two services:
+The hive runs a single service:
 
 ```
-┌─────────────────────┐     ┌──────────────────────────────────────────────┐
-│   Task Manager      │     │   AWM (AgentWorkingMemory) — port 8400      │
-│   port 8420         │     │                                              │
-│   (optional)        │     │   Memory: memory_write, memory_recall, etc.  │
-│ Sprint tasks,       │     │   Coordination: checkins, assignments,       │
-│ priorities,         │◄────│     file locks, commands, findings           │
-│ acceptance criteria │     │   (AWM_COORDINATION=true)                    │
-└─────────────────────┘     └──────────────────┬───────────────────────────┘
-                                               │
-              ┌────────────────────────────────┼────────────────────────────┐
-              │                                │                            │
-         ┌────▼────┐                    ┌──────▼──┐                 ┌──────▼──┐
-         │Worker-A │                    │Worker-B │                 │Worker-C │
-         └─────────┘                    └─────────┘                 └─────────┘
+┌──────────────────────────────────────────────┐
+│   AWM (AgentWorkingMemory) — port 8400      │
+│                                              │
+│   Memory: memory_write, memory_recall, etc.  │
+│   Coordination: checkins, assignments,       │
+│     file locks, commands, findings           │
+│   (AWM_COORDINATION=true)                    │
+└──────────────────┬───────────────────────────┘
+                   │
+┌──────────────────┼────────────────────────────┐
+│                  │                            │
+┌────▼────┐ ┌──────▼──┐                 ┌──────▼──┐
+│Worker-A │ │Worker-B │                 │Worker-C │
+└─────────┘ └─────────┘                 └─────────┘
 ```
 
-- **AWM (8400)** — Single service for both memory AND coordination. Memory via MCP tools (`memory_write`, `memory_recall`, etc.). Coordination via HTTP (`/checkin`, `/assign`, `/lock`, etc.). Coordination is enabled via `AWM_COORDINATION=true`.
-- **Task Manager (8420)** — Optional. Holds sprint backlog for the dev. **Workers do NOT interact with the Task Manager directly** — all your work comes through the Coordinator endpoints on AWM.
+- **AWM (8400)** — Single service for memory, coordination, and task management. Memory via MCP tools (`memory_write`, `memory_recall`, etc.). Coordination via HTTP (`/checkin`, `/assign`, `/lock`, etc.). Coordination is enabled via `AWM_COORDINATION=true`. All your work comes through the Coordinator endpoints on AWM.
 
 ## API Reference — EXACT Endpoints (USE THESE, DO NOT GUESS)
 
@@ -70,8 +68,8 @@ The hive runs two services:
 
 | Method | Endpoint | Body / Query | Purpose |
 |--------|----------|-------------|---------|
-| **POST** | **`/next`** | `{"name":"Worker-B","role":"worker","workspace":"PERSONAL"}` | **Combined checkin + command check + assignment poll (preferred)** |
-| POST | `/checkin` | `{"name":"Worker-B","role":"worker","pid":$$,"capabilities":["code","research"]}` | Register or heartbeat (use /next instead for polling) |
+| **POST** | **`/next`** | `{"name":"YOUR_NAME","role":"worker","workspace":"YOUR_WORKSPACE"}` | **Combined checkin + command check + assignment poll (preferred)** |
+| POST | `/checkin` | `{"name":"YOUR_NAME","role":"worker","pid":$$,"capabilities":["code","research"]}` | Register or heartbeat (use /next instead for polling) |
 | POST | `/checkout` | `{"agentId":"UUID"}` | Sign off (end session) |
 | GET | `/assignment?agentId=UUID` | — | Get your current assignment (includes `context` JSON field) |
 | GET | `/assignments` | `?status=completed&limit=20&offset=0&agent_id=UUID` | List assignments with filters and pagination |
@@ -128,31 +126,25 @@ A `SessionEnd` hook (`hooks/worker-cleanup.sh`) automatically runs when your ses
 
 ### 1. Check in and Get Assignment (Single Call) — HTTP, NOT MCP
 
-Your worker name is set by the launcher (`$WORKER_NAME`), workspace by `$WORKSPACE`. **Run this curl command before any MCP/memory operations:**
+Your worker name and workspace are in your system prompt identity (look for `WORKER_NAME=...` and `WORKSPACE=...`). **Use those exact values in the curl command below. Do NOT use shell variables like `$WORKER_NAME` — they may not be set.**
 
 ```bash
 curl -s -X POST http://127.0.0.1:8400/next \
   -H "Content-Type: application/json" \
-  -d "{\"name\":\"$WORKER_NAME\",\"role\":\"worker\",\"workspace\":\"$WORKSPACE\"}"
+  -d '{"name":"YOUR_WORKER_NAME","role":"worker","workspace":"YOUR_WORKSPACE"}'
 ```
 
-If `$WORKER_NAME` is not set, ask the user what your worker name is.
+Replace `YOUR_WORKER_NAME` and `YOUR_WORKSPACE` with the literal values from your identity prompt (e.g., `"name":"Worker-A","workspace":"WORK"`).
 
 The `/next` endpoint does checkin + command check + assignment poll in one call. It returns:
-- `agentId` — save this for lock/unlock/finding/assignment-update calls
+- `agentId` — save this for lock/unlock/finding/assignment-update calls. **Also write it to a temp file for the auto-heartbeat hook:**
+  ```bash
+  echo "YOUR_AGENT_ID" > /tmp/awm-agentid-YOUR_WORKER_NAME.txt
+  ```
 - `command` — if active, obey it (see below)
 - `assignment` — your work, if any
 
 If connection error: **"Coordinator not running. Start the coordinator first."**
-
-**Channel registration (when `channels.enabled: true` in synapse.config.json):**
-If `AWM_CHANNEL_PORT` is set in your environment, the AWM channel server is already running on that port (spawned by Claude Code via `--dangerously-load-development-channels server:awm`). After receiving your `agentId` from `/next`, register the channel:
-```bash
-curl -s -X POST http://127.0.0.1:8400/channel/register \
-  -H "Content-Type: application/json" \
-  -d "{\"agentId\":\"YOUR_AGENT_ID\",\"channelId\":\"http://127.0.0.1:${AWM_CHANNEL_PORT}\"}"
-```
-When registered, assignments arrive as `<channel source="awm">` messages — no idle polling needed. On checkout, channel sessions are auto-cleaned. **If `AWM_CHANNEL_PORT` is not set, skip channel registration and use the `/next` polling loop instead** (graceful fallback for users without Teams channels enabled).
 
 **If `command` is active:**
 - **BUILD_FREEZE** → Do not start work. Commit, release locks, heartbeat idle. Wait.
@@ -175,23 +167,33 @@ This surfaces decisions other workers/coordinator have written. Read the results
 - If `"assignment": { ... }` with a `"task"` field → you have work. Continue to step 4.
 - If `"assignment": null` → **enter the idle ready loop.**
 
-#### Idle Mode (waiting for channel push)
+#### Idle Mode (CronCreate polling loop)
 
-Assignments arrive via **channel push** (`← awm:` messages). You do NOT need to poll actively. When idle:
+When you have no assignment, set up a **CronCreate-based polling loop** — this is the PRIMARY mechanism for receiving work. Do NOT use `sleep` in bash — Claude Code agents cannot run persistent bash loops reliably.
 
-1. **Stay at the prompt.** Do NOT exit, do NOT ask the user for work, do NOT say "standing by" or "what would you like me to work on?" The coordinator assigns work via channel push — not the user.
-
-2. **When you receive a `← awm:` channel message** — it means you have an assignment. Call `POST /next` to get the assignment details, then start working (step 4).
-
-3. **Fallback heartbeat every 15 minutes** — run a single background check to stay registered and catch any missed pushes:
-```bash
-sleep 900 && curl -s -X POST http://127.0.0.1:8400/next -H "Content-Type: application/json" -d "{\"name\":\"$WORKER_NAME\",\"role\":\"worker\",\"workspace\":\"$WORKSPACE\"}"
+1. **Set up a 2-minute poll loop using CronCreate:**
 ```
-Run this with `run_in_background: true`. If it returns an assignment, process it. If null, schedule another 15-min heartbeat. This is a safety net — channel push is the primary delivery mechanism.
+Use the CronCreate tool with:
+  cron: "*/2 * * * *"
+  prompt: "worker-poll"
+  recurring: true
+```
+
+2. **When the "worker-poll" prompt fires:**
+```bash
+curl -s -X POST http://127.0.0.1:8400/next \
+  -H "Content-Type: application/json" \
+  -d '{"name":"YOUR_WORKER_NAME","role":"worker","workspace":"YOUR_WORKSPACE"}'
+```
+If `assignment` is non-null → cancel the loop (CronDelete) and start working on the assignment.
+If `command` is active → obey it (SHUTDOWN/PAUSE/BUILD_FREEZE).
+If null → do nothing, wait for next tick.
+
+3. **Channel push is a bonus, not required.** If you receive a `← awm:` message, call `POST /next` immediately. But the CronCreate loop is the reliable primary mechanism.
 
 4. **NEVER exit.** Sessions run for 4-8 hours. Do not stop after any timeout. Do not checkout. Only stop on explicit SHUTDOWN command.
 
-5. **AWM sync** — every 2-3 heartbeats (~30-45 min), recall AWM to stay current:
+5. **AWM sync** — every ~30 min, recall AWM to stay current:
 ```
 memory_recall: "project decisions blockers current status"
 ```
@@ -305,7 +307,7 @@ curl -s -X PATCH http://127.0.0.1:8400/pulse \
 ### Command Polling (Every 5-10 Minutes)
 
 ```bash
-curl -s -X POST http://127.0.0.1:8400/next -H "Content-Type: application/json" -d "{\"name\":\"$WORKER_NAME\",\"role\":\"worker\",\"workspace\":\"$WORKSPACE\"}"
+curl -s -X POST http://127.0.0.1:8400/next -H "Content-Type: application/json" -d '{"name":"YOUR_WORKER_NAME","role":"worker","workspace":"YOUR_WORKSPACE"}'
 ```
 Check the `command` field in the response.
 

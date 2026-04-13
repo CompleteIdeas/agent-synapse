@@ -429,8 +429,8 @@ async function cmdIngest() {
 // ─── start ──────────────────────────────────────────────────────────────────
 
 function cmdStart() {
-  const services = ['coordinator', 'task-manager'];
-  const ports = { coordinator: 8400, 'task-manager': 8420 };
+  const services = ['coordinator'];
+  const ports = { coordinator: 8400 };
 
   header('Starting AgentSynapse services (AWM runs externally)');
 
@@ -493,7 +493,7 @@ function cmdStart() {
   log('');
   log('Waiting for services to come up...');
   setTimeout(() => {
-    const allPorts = { coordinator: 8400, 'task-manager': 8420 };
+    const allPorts = { coordinator: 8400 };
     for (const [svc, port] of Object.entries(allPorts)) {
       const healthy = checkHealth(`http://127.0.0.1:${port}`);
       if (healthy) {
@@ -545,7 +545,7 @@ function cmdStatus() {
   const services = [
     { name: 'AWM (external)', port: 8400 },
     { name: 'coordinator', port: 8400 },
-    { name: 'task-manager', port: 8420 },
+    { name: 'task-manager (legacy)', port: 8400 },
   ];
 
   header(`AgentSynapse v${VERSION} — Service Status`);
