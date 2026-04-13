@@ -9,9 +9,8 @@
  * Model override: Reads role defaults from synapse.config.json "models" section.
  * Spawned workers use the "worker" role default (sonnet) unless overridden.
  *
- * --bare flag: Used here because spawned workers are single-task invocations
- * that skip hooks/LSP/plugins for faster startup. Hive-launched agents
- * (via start-worker.bat) do NOT use --bare since they need hooks.
+ * Matches start-worker.bat behavior: cd to project dir, no --bare (workers
+ * need hooks/MCP), GA channel syntax (--channels plugin:awm@agentsynapse).
  */
 
 const { spawn, execSync } = require('child_process');
@@ -68,40 +67,54 @@ const systemPrompt = [
   `Follow your agent protocol: checkin via POST /next, memory_restore, recall context, work on assignment, chain tasks until queue empty, then stop cleanly.`,
 ].join(' ');
 
-const modelFlag = agentModel ? ` --model ${agentModel}` : '';
-// Assign a random port (50000–59999) for this worker's channel server subprocess
-const channelPort = channelsEnabled ? (50000 + Math.floor(Math.random() * 9999)) : 0;
-// Write MCP config to temp file so the channel server path is resolved correctly
-const channelMcpPath = path.join(tmpDir, `channel-mcp-${workerName.toLowerCase()}.json`);
-if (channelsEnabled) {
-  const channelServerPath = path.join(synapseDir, 'packages', 'synapse-push', 'dist', 'channel-server.js');
-  fs.writeFileSync(channelMcpPath, JSON.stringify({
-    mcpServers: { awm: { command: 'node', args: [channelServerPath] } }
-  }));
+// Detect agent type: if a .claude/agents/<name>.md exists, use that agent def
+// Otherwise default to 'worker'. This lets Dev-Lead, code-reviewer, etc. use their own defs.
+let agentType = 'worker';
+const agentDefPath = path.join(synapseDir, '.claude', 'agents', `${workerName.toLowerCase()}.md`);
+if (fs.existsSync(agentDefPath)) {
+  agentType = workerName.toLowerCase();
 }
-const channelsFlag = channelsEnabled
-  ? ` --dangerously-load-development-channels server:awm --mcp-config "${channelMcpPath}"`
-  : '';
+
+// Copy agent definitions to project dir (same as launch-hive.cjs does)
+// so Claude Code loads the project's context (skills, CLAUDE.md, git) but
+// uses AgentSynapse's canonical agent defs.
+const agentDefsSource = path.join(synapseDir, '.claude', 'agents');
+const agentDefsDest = path.join(path.resolve(projectDir), '.claude', 'agents');
+try {
+  fs.mkdirSync(agentDefsDest, { recursive: true });
+  for (const f of fs.readdirSync(agentDefsSource)) {
+    if (f.endsWith('.md')) {
+      fs.copyFileSync(path.join(agentDefsSource, f), path.join(agentDefsDest, f));
+    }
+  }
+} catch { /* best effort — project may not have .claude dir */ }
+
+const modelFlag = agentModel ? ` --model ${agentModel}` : '';
+// GA channel syntax: --channels plugin:awm@agentsynapse (no --dangerously-load-development-channels)
+const channelsFlag = channelsEnabled ? ` --channels plugin:awm@agentsynapse` : '';
 
 if (IS_WINDOWS) {
   // Windows: generate .bat and launch via Windows Terminal
   const scriptPath = path.join(tmpDir, `spawn-${workerName.toLowerCase()}.bat`);
   let bat = '@echo off\r\n';
-  bat += `cd /d "${synapseDir}"\r\n`;
+  bat += `cd /d "${path.resolve(projectDir)}"\r\n`;
   bat += `set WORKER_NAME=${workerName}\r\n`;
   bat += `set WORKSPACE=${workspaceName}\r\n`;
+  bat += `set AWM_WORKSPACE=${workspaceName}\r\n`;
   bat += `set PROJECT_DIR=${projectDir}\r\n`;
+  bat += `set SYNAPSE_DIR=${synapseDir}\r\n`;
   if (agentModel) bat += `set AGENT_MODEL=${agentModel}\r\n`;
-  if (channelsEnabled) bat += `set AWM_CHANNEL_PORT=${channelPort}\r\n`;
-  bat += `claude --bare --dangerously-skip-permissions${modelFlag}${channelsFlag} --agent worker --append-system-prompt "${systemPrompt}" "${task.replace(/"/g, '""')}"\r\n`;
+  if (channelsEnabled) bat += `set CHANNELS_ENABLED=1\r\n`;
+  bat += `claude --dangerously-skip-permissions${modelFlag}${channelsFlag} --agent ${agentType} --append-system-prompt "${systemPrompt}" "${task.replace(/"/g, '""')}"\r\n`;
+  bat += `exit\r\n`;
   fs.writeFileSync(scriptPath, bat);
 
   try {
-    spawn('wt', ['-w', wtWindowName, 'new-tab', '--title', `${workerName} [task]`, 'cmd', '/k', scriptPath],
+    spawn('wt', ['-w', wtWindowName, 'new-tab', '--title', `${workerName} [task]`, 'cmd', '/c', scriptPath],
       { detached: true, stdio: 'ignore' }).unref();
     console.log(JSON.stringify({ spawned: true, worker: workerName, window: wtWindowName, task: task.slice(0, 100), scriptPath }));
   } catch (err) {
-    spawn('cmd', ['/c', 'start', `"${workerName}"`, 'cmd', '/k', scriptPath],
+    spawn('cmd', ['/c', 'start', `"${workerName}"`, 'cmd', '/c', scriptPath],
       { detached: true, stdio: 'ignore', shell: true }).unref();
     console.log(JSON.stringify({ spawned: true, worker: workerName, task: task.slice(0, 100), fallback: 'separate window' }));
   }
@@ -109,13 +122,15 @@ if (IS_WINDOWS) {
   // Unix: generate .sh and launch via available terminal emulator
   const scriptPath = path.join(tmpDir, `spawn-${workerName.toLowerCase()}.sh`);
   let sh = '#!/usr/bin/env bash\n';
-  sh += `cd "${synapseDir}"\n`;
+  sh += `cd "${path.resolve(projectDir)}"\n`;
   sh += `export WORKER_NAME=${workerName}\n`;
   sh += `export WORKSPACE=${workspaceName}\n`;
+  sh += `export AWM_WORKSPACE=${workspaceName}\n`;
   sh += `export PROJECT_DIR="${projectDir}"\n`;
+  sh += `export SYNAPSE_DIR="${synapseDir}"\n`;
   if (agentModel) sh += `export AGENT_MODEL=${agentModel}\n`;
-  if (channelsEnabled) sh += `export AWM_CHANNEL_PORT=${channelPort}\n`;
-  sh += `claude --bare --dangerously-skip-permissions${modelFlag}${channelsFlag} --agent worker --append-system-prompt "${systemPrompt}" "${task.replace(/"/g, '\\"')}"\n`;
+  if (channelsEnabled) sh += `export CHANNELS_ENABLED=1\n`;
+  sh += `claude --dangerously-skip-permissions${modelFlag}${channelsFlag} --agent ${agentType} --append-system-prompt "${systemPrompt}" "${task.replace(/"/g, '\\"')}"\n`;
   fs.writeFileSync(scriptPath, sh, { mode: 0o755 });
 
   const hasGnome = (() => { try { execSync('which gnome-terminal', { stdio: 'pipe' }); return true; } catch { return false; } })();
