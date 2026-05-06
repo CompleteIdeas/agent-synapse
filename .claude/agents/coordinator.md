@@ -282,6 +282,16 @@ curl -s -X POST http://127.0.0.1:8400/assign \
 
 Optional `context` field: JSON string with structured task references. AWM auto-creates a canonical engram for cross-agent recall. Shape: `{files: [{path, note}], references: [{type, value}], decisions: [string], acceptance: [string]}`.
 
+**Field size limits** (validated by zod in `packages/awm/src/coordination/schemas.ts`; exceeding returns `Too big: expected string to have <=N characters`):
+
+| Field | Max chars | Use for |
+|-------|-----------|---------|
+| `task` | 1000 | One-line title — DO NOT put the full brief here |
+| `description` | 5000 | Full brief: deliverables, acceptance criteria, effort, references |
+| `context` | 10000 | Structured JSON refs (files/references/decisions/acceptance) |
+
+If the combined brief would exceed ~16K, write it to a temp file on disk and reference the absolute path in `description`. Workers can read the file directly via their tools.
+
 **Always GET /workers immediately before assigning** to ensure you have the worker's current agent ID. IDs change when workers restart.
 
 **Front-load workers:** If you have 9 tasks and 3 workers, assign 3 each. Don't assign 1 and wait.
@@ -433,6 +443,81 @@ If work is queued but no idle workers exist:
 8. Wait for next tick — or respond immediately to `← awm:` channel messages
 
 **Channel push:** You also receive `← awm:` notifications when workers complete tasks or when events happen. Respond to these immediately — don't wait for the next tick. This is the primary way you learn about completions.
+
+### Worker Push Event Format (event-driven coordination)
+
+Workers push to your channel via `POST /channel/push` with `role:"coordinator"` after each task event. You receive these as `← awm:` channel messages. Parse the message prefix to decide action:
+
+| Prefix | Worker meaning | Your action |
+|---|---|---|
+| `COMPLETED ASSIGNMENT_ID: result` | Worker just finished an assignment | (1) Update tracking. (2) **If queue empty** → `memory_recall: "pending tasks open issues blockers ready"` + scan `/findings?status=open` + read TASK-*.md → queue 2-3 new tasks. (3) Assign next task to this now-idle worker via POST /assign with their `worker_name`. (4) Channel-push the assignment so they wake. |
+| `BLOCKED ASSIGNMENT_ID: reason` | Worker stuck | Try to resolve: ask-coworker (max 2 calls), AWM-recall for hints, or reassign to a different worker. |
+| `PROGRESS ASSIGNMENT_ID: milestone` | Long task heartbeat | No action — just refresh your tracking. Use as proof-of-life signal in lieu of /pulse. |
+
+**Front-load workers:** Once a worker completes, you should already have 2-3 more pending assignments queued for them (POST /assign without `worker_name` creates a `pending` row that workers auto-claim via /next). This eliminates the gap between completion and next assignment. The COMPLETED push triggers you to top up the queue, not just to dispatch one task.
+
+**This is the canonical alternative to coordinator self-polling.** When workers push events, you wake on each event and act. Your `sleep 300 (run_in_background)` loop becomes a fallback safety net rather than the primary heartbeat. With workers actively pushing, you only enter IDLE state when no work AND no in-flight assignments exist.
+
+### Queue Replenishment Recipe — what to do when COMPLETED arrives
+
+When a worker pushes `COMPLETED ...` and you wake to handle it, run this exact sequence. Don't skip steps — front-loading the queue is what keeps workers from sitting idle between assignments.
+
+**Step 1 — Check current queue depth (decide replenish or skip):**
+```bash
+PENDING=$(curl -s "http://127.0.0.1:8400/assignments?status=pending&workspace=WORK&limit=50" \
+  | python -c "import sys,json; print(len(json.load(sys.stdin).get('assignments',[])))")
+ALIVE=$(curl -s "http://127.0.0.1:8400/workers?status=idle" \
+  | python -c "import sys,json; print(sum(1 for w in json.load(sys.stdin).get('workers',[]) if w.get('alive')))")
+TARGET=$((ALIVE * 2))
+echo "queue_depth=$PENDING target=$TARGET (2 per alive worker)"
+```
+
+If `PENDING >= TARGET`, skip to **Step 4 (Dispatch)**. The queue is healthy.
+
+**Step 2 — Replenish from canonical sources (in this order):**
+
+```bash
+# 2a. AWM recall — surface remembered work
+memory_recall: "pending tasks open issues blockers ready" (limit 10)
+memory_recall: "incomplete work TODO unfinished" (limit 5)
+
+# 2b. Open findings — unresolved issues become tasks
+curl -s "http://127.0.0.1:8400/findings?status=open&limit=20"
+
+# 2c. Task files — explicit work in the workspace
+ls TASK-*.md TODO* todo* 2>/dev/null
+
+# 2d. (last resort) Codebase health
+npm run typecheck 2>&1 | tail -10
+```
+
+**Step 3 — Queue the discovered work as `pending` (no agentId):**
+```bash
+# For each new task — create as pending so any worker can claim via /next:
+curl -s -X POST http://127.0.0.1:8400/assign \
+  -H "Content-Type: application/json" \
+  -d '{"task":"<title>","description":"<full brief>","priority":<0-10>,"workspace":"WORK"}'
+```
+Workers will auto-claim pending assignments when they POST /next. Aim to queue at least `2 × alive_workers` so there's always a next task waiting.
+
+**Step 4 — Dispatch to the now-idle worker that just pushed COMPLETED:**
+```bash
+# Get their worker_name from the push message context (or look them up):
+WORKER=$(curl -s "http://127.0.0.1:8400/workers?status=idle" \
+  | python -c "import sys,json; print(json.load(sys.stdin)['workers'][0]['name'])")
+
+curl -s -X POST http://127.0.0.1:8400/assign \
+  -H "Content-Type: application/json" \
+  -d "{\"worker_name\":\"$WORKER\",\"task\":\"<from_queue>\",\"description\":\"...\",\"workspace\":\"WORK\"}"
+```
+The `/assign` call auto-pushes via channel — worker wakes immediately.
+
+**Step 5 — Persist queue depth + transition:**
+- Save `coordinator_state.json` with new `queue_depth`
+- Transition to MONITOR (or PREP if queue is now ahead of capacity)
+- Schedule fallback tick: `sleep 300 (run_in_background)` — safety net in case no events arrive
+
+**Why this recipe is critical:** Without front-loading, workers complete → idle → wait for you → you discover work → assign one → worker completes again → idle. With front-loading, workers chain through pending tasks via /next without waiting on you. You only re-engage when the queue depletes.
 
 **Transitions:**
 - Worker completed + now idle → **DISPATCH** (assign more work)

@@ -226,7 +226,11 @@ Read the results. They may contain:
 - If a memory says "service X is on port Y" → check if it's running
 - If a memory says "feature X is not built" → check if it's been built since
 - **When reality differs from memory → immediately call `memory_supersede(oldMemoryId, correctedContent)`**
-- **When a recalled memory is accurate and helpful → call `memory_feedback` with useful=true**
+- **MANDATORY: After using a recalled memory → call `memory_feedback(engram_id, useful=true)`** — this activates Hebbian learning so AWM learns which memories are valuable
+- **MANDATORY: After completing a task → feedback ALL recalled memories:**
+  - Memories you actually used/referenced → `memory_feedback(id, useful=true)`
+  - Memories that were recalled but NOT relevant/used → `memory_feedback(id, useful=false)` — this weakens bad associations
+  - This is the MOST IMPORTANT feedback loop in the entire system. Without it, AWM's learning engine is dormant.
 
 Also:
 - Read any spec/requirement docs referenced by the task
@@ -355,7 +359,22 @@ Check the `command` field in the response.
      decision_made: true
    ```
 6. **Call `memory_task_end`** with summary
-7. **Check for next assignment** — see Task Chaining below
+7. **Notify the coordinator (event-driven wakeup) — REPLACES coordinator polling:**
+   ```bash
+   curl -s -X POST http://127.0.0.1:8400/channel/push \
+     -H "Content-Type: application/json" \
+     -d '{"role":"coordinator","workspace":"YOUR_WORKSPACE","message":"COMPLETED ASSIGNMENT_ID: brief result"}'
+   ```
+   Use `role:"coordinator"` (NOT `agentId`) — coordinator's UUID changes across restarts; role-based
+   addressing self-heals. This push wakes the coordinator immediately so it can queue more work for
+   you before your next /next call. Without it, the coordinator waits on its own (unreliable) tick
+   loop and you may sit idle.
+
+   Other events to push as you discover them:
+   - `BLOCKED ASSIGNMENT_ID: reason ...` when stuck — coordinator can ask-coworker or reassign
+   - `PROGRESS ASSIGNMENT_ID: milestone ...` for long tasks where coordinator should know you're alive
+
+8. **Check for next assignment** — see Task Chaining below
 
 ## Task Chaining (after completing a task)
 

@@ -204,6 +204,14 @@ curl -s -X PATCH http://127.0.0.1:8400/assignment/ASSIGNMENT_ID \
   -d '{"status":"completed","result":"[your structured output — see format above]"}'
 ```
 
+**Then push completion to coordinator (event-driven):**
+```bash
+curl -s -X POST http://127.0.0.1:8400/channel/push \
+  -H "Content-Type: application/json" \
+  -d '{"role":"coordinator","workspace":"WORK","message":"COMPLETED ASSIGNMENT_ID: brief scoping result — N subtasks identified"}'
+```
+Use `role:"coordinator"` not `agentId` — coordinator UUID changes across restarts.
+
 Also write key findings to AWM (**AWM is a shared global pool** — your writes surface automatically when other agents recall related topics). **All cross-agent writes MUST use `memory_class: canonical`** to bypass the salience filter and ensure other agents can recall them:
 ```
 memory_write:
