@@ -17,7 +17,7 @@ if exist "%~dp0..\packages\awm" (
     set AWM_DIR=%~dp0..\node_modules\agent-synapse\packages\awm
 )
 if not defined AWM_DIR (
-    echo  ERROR: Cannot find AWM directory (packages/awm).
+    echo  ERROR: Cannot find AWM directory ^(packages/awm^).
     pause
     exit /b 1
 )
