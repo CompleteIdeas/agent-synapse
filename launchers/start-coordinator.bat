@@ -31,15 +31,13 @@ if not exist node_modules (
     echo.
 )
 
-:: Start AWM with coordination enabled
+REM Start AWM with coordination enabled.
+REM WORKER_ROLE makes any channel-server.js spawned via MCP plugin
+REM auto-register with role=coordinator (AWM 0.7.4).
+REM WORKSPACE default avoids workers landing in workspace=DEFAULT.
 set AWM_COORDINATION=true
-:: WORKER_ROLE=coordinator so any channel-server.js spawned via MCP plugin
-:: auto-registers itself with role='coordinator'. Required for workers'
-:: role-based /channel/push to reach this coordinator (per AWM 0.7.4).
 set WORKER_ROLE=coordinator
-:: WORKSPACE consistency — don't let an empty WORKSPACE env produce role
-:: rows in a different workspace than workers expect.
-if "%WORKSPACE%"=="" set WORKSPACE=WORK
+if not defined WORKSPACE set WORKSPACE=WORK
 echo  Launching AWM on http://127.0.0.1:8400 (coordination enabled)
 echo  WORKER_ROLE=%WORKER_ROLE%  WORKSPACE=%WORKSPACE%
 echo  Press Ctrl+C to stop
