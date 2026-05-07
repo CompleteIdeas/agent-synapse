@@ -31,15 +31,10 @@ if not exist node_modules (
     echo.
 )
 
-REM Start AWM with coordination enabled.
-REM WORKER_ROLE makes any channel-server.js spawned via MCP plugin
-REM auto-register with role=coordinator (AWM 0.7.4).
-REM WORKSPACE default avoids workers landing in workspace=DEFAULT.
+:: Start AWM with coordination enabled
 set AWM_COORDINATION=true
 set WORKER_ROLE=coordinator
-if not defined WORKSPACE set WORKSPACE=WORK
 echo  Launching AWM on http://127.0.0.1:8400 (coordination enabled)
-echo  WORKER_ROLE=%WORKER_ROLE%  WORKSPACE=%WORKSPACE%
 echo  Press Ctrl+C to stop
 echo.
 npx tsx src/index.ts
