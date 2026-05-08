@@ -6,7 +6,7 @@
 
 AgentSynapse is a framework for running multiple Claude Code agents in parallel — with shared memory, coordinated task assignment, file locking, and autonomous coordination. It combines two core systems:
 
-- **AWM** ([AgentWorkingMemory](https://github.com/CompleteIdeas/agent-working-memory), v0.7.8) — Cognitive memory layer with activation-based retrieval, salience filtering, Hebbian learning. Agents remember across sessions. Also serves as the coordination backend when `AWM_COORDINATION=true`. Recall latency on a 17K-engram corpus is ~1s (down from 11-23s pre-0.7.6) so agents can recall freely.
+- **AWM** ([AgentWorkingMemory](https://github.com/CompleteIdeas/agent-working-memory), v0.7.15) — Cognitive memory layer with activation-based retrieval, salience filtering, Hebbian learning. Agents remember across sessions. Also serves as the coordination backend when `AWM_COORDINATION=true`. Recall latency on a 17K-engram corpus is ~300ms typical, 400-700ms median (down from 11-23s pre-0.7.6) so agents can recall freely.
 - **Coordination** — Built into AWM. Task dispatch, file locks, heartbeats, worker discovery, and command broadcasting. All on port 8400.
 
 ```
@@ -291,7 +291,7 @@ Full list in [`packages/awm/README.md`](packages/awm/README.md#environment-varia
 
 ## Recent Changes
 
-- **2026-05-08 — AWM 0.7.6 → 0.7.8.** Recall latency dropped from 11–23s to ~1s on 17K-engram corpora through (a) a SQLite query-plan fix (BM25 CTE prefilter, 567× faster on wide OR queries), (b) batched association lookup, and (c) candidate pool reduction before deep scoring. Recall quality preserved (8/8 top-1 matches verified). Also added the `detectVerifiedFinding` salience auto-promoter so operational batch summaries with concrete IDs survive the novelty filter, and an `AWM_DISABLE_POOL_FILTER=1` escape hatch for diagnostics. See [packages/awm/CHANGELOG.md](packages/awm/CHANGELOG.md) for the full history.
+- **2026-05-08 — AWM 0.7.6 → 0.7.15 (10 versions in one sprint).** Recall latency dropped from **11-23s to ~300ms typical** on 17K-engram corpora (~25-37× faster) with recall quality preserved (8/8 top-1 across all A/B tests). Layered fixes: (a) SQLite query-plan fix — BM25 CTE prefilter, 567× faster on wide OR queries; (b) candidate pool reduction before deep scoring; (c) two-pass slim/hydrate fetch; (d) in-memory slim cache; (e) reranker skip on clear winners; (f) query expansion LRU cache + skip heuristic; (g) aggregate association stats instead of full edge objects; (h) batched cross-encoder + passage truncation; (i) eager cache warm at startup. Also added the `detectVerifiedFinding` salience auto-promoter for operational batch summaries with concrete IDs. Four `AWM_DISABLE_*` env-vars expose escape hatches for each optimization. See [packages/awm/CHANGELOG.md](packages/awm/CHANGELOG.md) for the full per-version detail.
 - **Hive agent rules updated.** `.claude/agents/{coordinator,dev-lead,worker}.md` now document the auto-promote backstop and the new env vars.
 - **Standalone agents inherit the same updates** automatically: `npm install -g agent-working-memory@latest && awm setup --global` rewrites CLAUDE.md with the new instruction template.
 
