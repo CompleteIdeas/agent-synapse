@@ -221,6 +221,8 @@ memory_write:
   memory_class: canonical
 ```
 
+**Auto-promote backstop (AWM 0.7.5+):** if you forget `memory_class: canonical`, two patterns still survive: (1) content starting with a stakeholder name + a feedback verb ("Robert said…", "Katherine decided…") auto-promotes to canonical; (2) content with action verb (Submitted/Finalized/Completed/Reconciled/etc.) plus 2+ concrete IDs (ISO date, "event N", "ticket #N") gets a 0.45 floor. Don't rely on it for important scoping writes — set canonical explicitly.
+
 ### 6. Check for Next Assignment
 
 After completing a scoping task:

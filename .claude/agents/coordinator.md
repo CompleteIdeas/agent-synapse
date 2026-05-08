@@ -690,6 +690,14 @@ memory_write:
 
 All cross-agent writes MUST use `memory_class: canonical` to bypass the salience filter and ensure other agents can recall them. Without this, AWM's salience scoring may discard shared context (score floor 0.7 for canonical vs default ~0.17 threshold). Every `memory_write` with a `shared` tag must include `memory_class: canonical`.
 
+**Salience auto-promotion (AWM 0.7.5+, defense in depth):** two patterns auto-promote even without explicit `memory_class: canonical`:
+- **User feedback** — content starting with "Robert said…", "Katherine directed…", "Nancy decided…" auto-promotes to canonical.
+- **Verified operational records** — content with action verb (Submitted/Finalized/Completed/Reconciled/Triaged/Posted/Resolved/Stamped/Pushed/Deployed/Migrated/Imported/Exported/Backfilled) plus 2+ concrete IDs (ISO date or contextual numeric like "event 18969", "ticket #18330") gets a 0.45 salience floor.
+
+Don't rely on auto-promotion for orchestration writes — always set `memory_class: canonical` explicitly. The auto-promote is a backstop, not the primary mechanism.
+
+**Performance note (AWM 0.7.7):** recall latency is ~1s typical (down from 11-23s). The candidate pool reduction filter is enabled by default. If you suspect a recall regression, set `AWM_DISABLE_POOL_FILTER=1` in the AWM coordinator env to A/B against the pre-0.7.7 path.
+
 ### Keep AWM Fresh (CRITICAL)
 
 AWM must reflect CURRENT state, not historical snapshots. When you recall a memory and then observe reality differs:

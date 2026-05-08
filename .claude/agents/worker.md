@@ -287,7 +287,15 @@ memory_write:
 
 **All cross-agent writes MUST use `memory_class: canonical`** to bypass the salience filter and ensure other agents can recall them. Without this, AWM's salience scoring may discard shared context (score floor 0.7 for canonical vs default ~0.17 threshold).
 
+**Salience auto-promotion (defense in depth, AWM 0.7.5+):** even if you forget `memory_class: canonical`, two patterns auto-promote:
+- **User feedback** — content starting with "Robert said…", "Katherine directed…" etc. → canonical (floor 0.7)
+- **Verified operational records** — content with an action verb (Submitted/Finalized/Completed/Reconciled/Triaged/Posted/Resolved/Stamped/Pushed/Deployed/Migrated/Imported/Exported/Backfilled) plus 2+ concrete identifiers (ISO date or contextual ID like "event 18969", "ticket #18330") → 0.45 floor
+
+These are belt-and-suspenders. Don't rely on auto-promotion for important shared writes — set `memory_class: canonical` explicitly.
+
 **Do NOT wait until task end to write.** Write as you discover. Other workers may need this context mid-task.
+
+**Recall is fast now (~1s, AWM 0.7.7+).** Don't ration recalls to save time. If you might have prior context, recall first — it's faster than re-deriving.
 
 **KEEP AWM FRESH — When you observe something newer than what AWM has:**
 - Read a file and it differs from what a memory says → `memory_supersede` with current state
