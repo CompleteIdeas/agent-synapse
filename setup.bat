@@ -30,72 +30,79 @@ if "%SYNAPSE_DIR:~-1%"=="\" set SYNAPSE_DIR=%SYNAPSE_DIR:~0,-1%
 :: =============================================
 echo  [1/5] Checking workspace configuration...
 
+:: NOTE: cmd.exe does NOT support `goto` or labels inside parenthesized
+:: blocks. The previous version had `:worker_loop` + `goto` inside an
+:: `else (...)` block which broke the parser on fresh installs (where
+:: synapse.workspaces.json doesn't exist and the else branch fires).
+:: Refactored to guard-and-skip pattern with labels at top level.
+
 if exist "%SYNAPSE_DIR%\synapse.workspaces.json" (
     echo  Found existing synapse.workspaces.json — skipping.
     echo.
-) else (
-    echo  No synapse.workspaces.json found. Creating one now...
-    echo.
-
-    :: Detect current Windows username
-    set "CURRENT_USER=%USERNAME%"
-    echo  Detected Windows user: %USERNAME%
-    echo.
-
-    :: Ask for project directory
-    set "DEFAULT_PROJECT_DIR=C:\Users\%USERNAME%\project"
-    set /p "PROJECT_DIR=  Project directory [%DEFAULT_PROJECT_DIR%]: "
-    if "%PROJECT_DIR%"=="" set "PROJECT_DIR=%DEFAULT_PROJECT_DIR%"
-
-    :: Ask for number of workers
-    set "NUM_WORKERS=2"
-    set /p "NUM_WORKERS=  Number of worker agents [2]: "
-    if "%NUM_WORKERS%"=="" set "NUM_WORKERS=2"
-
-    :: Build the JSON config
-    echo  Generating synapse.workspaces.json...
-
-    > "%SYNAPSE_DIR%\synapse.workspaces.json" (
-        echo {
-        echo   "workspaces": {
-        echo     "work": {
-        echo       "name": "WORK",
-        echo       "projectDir": "%PROJECT_DIR:\=\\%",
-        echo       "agents": [
-        echo         { "name": "coordinator", "role": "coordinator", "delay": 0 },
-        echo         { "name": "Dev-Lead", "role": "dev-lead", "delay": 5 }
-    )
-
-    :: Add worker agents
-    set /a DELAY=8
-    set /a WORKER_NUM=0
-    set "LETTERS=ABCDEFGH"
-
-    :worker_loop
-    if %WORKER_NUM% geq %NUM_WORKERS% goto worker_done
-    set /a IDX=%WORKER_NUM%
-    call set "LETTER=%%LETTERS:~%IDX%,1%%"
-    >> "%SYNAPSE_DIR%\synapse.workspaces.json" (
-        echo         ,{ "name": "Worker-%LETTER%", "role": "worker", "delay": %DELAY% }
-    )
-    set /a WORKER_NUM+=1
-    set /a DELAY+=3
-    goto worker_loop
-
-    :worker_done
-    >> "%SYNAPSE_DIR%\synapse.workspaces.json" (
-        echo       ]
-        echo     }
-        echo   }
-        echo }
-    )
-
-    echo.
-    echo  Created synapse.workspaces.json:
-    echo    Project dir: %PROJECT_DIR%
-    echo    Agents: coordinator + dev-lead + %NUM_WORKERS% workers
-    echo.
+    goto :workspaces_done
 )
+
+echo  No synapse.workspaces.json found. Creating one now...
+echo.
+
+:: Detect current Windows username
+set "CURRENT_USER=%USERNAME%"
+echo  Detected Windows user: %USERNAME%
+echo.
+
+:: Ask for project directory
+set "DEFAULT_PROJECT_DIR=C:\Users\%USERNAME%\project"
+set /p "PROJECT_DIR=  Project directory [%DEFAULT_PROJECT_DIR%]: "
+if "%PROJECT_DIR%"=="" set "PROJECT_DIR=%DEFAULT_PROJECT_DIR%"
+
+:: Ask for number of workers
+set "NUM_WORKERS=2"
+set /p "NUM_WORKERS=  Number of worker agents [2]: "
+if "%NUM_WORKERS%"=="" set "NUM_WORKERS=2"
+
+:: Build the JSON config
+echo  Generating synapse.workspaces.json...
+
+> "%SYNAPSE_DIR%\synapse.workspaces.json" (
+    echo {
+    echo   "workspaces": {
+    echo     "work": {
+    echo       "name": "WORK",
+    echo       "projectDir": "%PROJECT_DIR:\=\\%",
+    echo       "agents": [
+    echo         { "name": "coordinator", "role": "coordinator", "delay": 0 },
+    echo         { "name": "Dev-Lead", "role": "dev-lead", "delay": 5 }
+)
+
+:: Add worker agents — labels at top level, NOT inside any (...) block
+set /a DELAY=8
+set /a WORKER_NUM=0
+set "LETTERS=ABCDEFGH"
+
+:worker_loop
+if %WORKER_NUM% geq %NUM_WORKERS% goto :worker_done
+set /a IDX=%WORKER_NUM%
+call set "LETTER=%%LETTERS:~%IDX%,1%%"
+>> "%SYNAPSE_DIR%\synapse.workspaces.json" echo         ,{ "name": "Worker-%LETTER%", "role": "worker", "delay": %DELAY% }
+set /a WORKER_NUM+=1
+set /a DELAY+=3
+goto :worker_loop
+
+:worker_done
+>> "%SYNAPSE_DIR%\synapse.workspaces.json" (
+    echo       ]
+    echo     }
+    echo   }
+    echo }
+)
+
+echo.
+echo  Created synapse.workspaces.json:
+echo    Project dir: %PROJECT_DIR%
+echo    Agents: coordinator + dev-lead + %NUM_WORKERS% workers
+echo.
+
+:workspaces_done
 
 :: =============================================
 :: Step 2-5: Claude plugin setup
