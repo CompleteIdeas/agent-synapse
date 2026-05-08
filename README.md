@@ -6,7 +6,7 @@
 
 AgentSynapse is a framework for running multiple Claude Code agents in parallel — with shared memory, coordinated task assignment, file locking, and autonomous coordination. It combines two core systems:
 
-- **AWM** ([AgentWorkingMemory](https://github.com/CompleteIdeas/agent-working-memory)) — Cognitive memory layer with activation-based retrieval, salience filtering, Hebbian learning. Agents remember across sessions. Also serves as the coordination backend when `AWM_COORDINATION=true`.
+- **AWM** ([AgentWorkingMemory](https://github.com/CompleteIdeas/agent-working-memory), v0.7.8) — Cognitive memory layer with activation-based retrieval, salience filtering, Hebbian learning. Agents remember across sessions. Also serves as the coordination backend when `AWM_COORDINATION=true`. Recall latency on a 17K-engram corpus is ~1s (down from 11-23s pre-0.7.6) so agents can recall freely.
 - **Coordination** — Built into AWM. Task dispatch, file locks, heartbeats, worker discovery, and command broadcasting. All on port 8400.
 
 ```
@@ -118,6 +118,13 @@ The memory layer uses cognitive science concepts:
 - **Retraction** — Correct wrong information without losing history
 
 Agents interact via MCP tools: `memory_write`, `memory_recall`, `memory_restore`, `memory_checkpoint`, `memory_feedback`, `memory_retract`, `memory_task_begin`, `memory_task_end`.
+
+**Memory classes (AgentSynapse hive rule):** every cross-agent write must use `memory_class: canonical` to bypass the salience filter (default `working` may get filtered). Two patterns auto-promote even without explicit `canonical`:
+
+- **User feedback** — content starting with `Robert said…`, `Katherine directed…` etc. (full name list in `src/core/salience.ts`)
+- **Verified operational records** — content with an action verb (Submitted/Finalized/Completed/Reconciled/Triaged/Posted/Resolved/Stamped/Pushed/Deployed/Migrated/Imported/Exported/Backfilled) plus 2+ concrete IDs (ISO date or `event 18969` / `ticket #18330` style)
+
+Don't rely on auto-promotion for shared writes — set `memory_class: canonical` explicitly. Auto-promote is a backstop, not the primary mechanism.
 
 ### Coordinator
 
@@ -265,6 +272,28 @@ To use AgentSynapse in your own project:
 6. **Customize agent definitions** — edit `.claude/agents/coordinator.md`, `dev-lead.md`, `worker.md` for your domain
 
 7. **Add file lock hooks** — copy `hooks/check-file-lock.sh` into your project's `.claude/hooks/` and reference in `.claude/settings.json`
+
+## Environment Variables (Hive)
+
+Set these in the AWM coordinator process env or in a `.env` file alongside `packages/awm/`:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AWM_PORT` | `8400` | HTTP coordination + memory API port |
+| `AWM_COORDINATION` | *(unset)* | Set `true` to enable coordination endpoints (`/checkin`, `/assign`, `/lock`, etc.) |
+| `WORKER_ROLE` | `worker` | Role for the launching agent: `coordinator` / `dev-lead` / `worker` |
+| `WORKSPACE` | `DEFAULT` | Workspace scope for cross-agent recall + task dispatch |
+| `AWM_DB_PATH` | `memory.db` | SQLite database path |
+| `AWM_DISABLE_POOL_FILTER` | *(unset)* | Set `1` to disable AWM 0.7.7+ candidate pool reduction. Reverts recall to pre-0.7.7 path (slower but useful for A/B testing if a recall regression appears) |
+| `AWM_API_KEY` | *(none)* | Bearer token for HTTP API auth (recommended for shared/networked deploys) |
+
+Full list in [`packages/awm/README.md`](packages/awm/README.md#environment-variables).
+
+## Recent Changes
+
+- **2026-05-08 — AWM 0.7.6 → 0.7.8.** Recall latency dropped from 11–23s to ~1s on 17K-engram corpora through (a) a SQLite query-plan fix (BM25 CTE prefilter, 567× faster on wide OR queries), (b) batched association lookup, and (c) candidate pool reduction before deep scoring. Recall quality preserved (8/8 top-1 matches verified). Also added the `detectVerifiedFinding` salience auto-promoter so operational batch summaries with concrete IDs survive the novelty filter, and an `AWM_DISABLE_POOL_FILTER=1` escape hatch for diagnostics. See [packages/awm/CHANGELOG.md](packages/awm/CHANGELOG.md) for the full history.
+- **Hive agent rules updated.** `.claude/agents/{coordinator,dev-lead,worker}.md` now document the auto-promote backstop and the new env vars.
+- **Standalone agents inherit the same updates** automatically: `npm install -g agent-working-memory@latest && awm setup --global` rewrites CLAUDE.md with the new instruction template.
 
 ## License
 
