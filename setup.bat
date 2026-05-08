@@ -107,23 +107,28 @@ echo.
 :: =============================================
 :: Step 2-5: Claude plugin setup
 :: =============================================
+:: NOTE: `claude` on Windows is a `.cmd` shim (installed by npm). Calling
+:: another .cmd from inside a .bat WITHOUT the `call` prefix transfers
+:: control to the child shim and never returns — the parent setup.bat
+:: silently exits after the first `claude` invocation. Always use `call`.
+
 echo  [2/5] Checking Claude Code version...
-claude --version 2>&1
+call claude --version 2>&1
 echo.
 
 :: Register local marketplace
 echo  [3/5] Registering AgentSynapse marketplace...
-claude plugin marketplace add "%SYNAPSE_DIR%\marketplace" 2>&1
+call claude plugin marketplace add "%SYNAPSE_DIR%\marketplace" 2>&1
 echo.
 
 :: Install AWM channel plugin
 echo  [4/5] Installing AWM channel plugin...
-claude plugin install awm@agentsynapse 2>&1
+call claude plugin install awm@agentsynapse 2>&1
 echo.
 
 :: Verify
 echo  [5/5] Verifying installation...
-claude plugin list 2>&1 | findstr /i "awm"
+call claude plugin list 2>&1 | findstr /i "awm"
 if %errorlevel% equ 0 (
     echo.
     echo  ========================================
