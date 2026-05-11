@@ -262,30 +262,45 @@ curl -s -X PATCH http://127.0.0.1:8400/assignment/ASSIGNMENT_ID \
 
 ### AWM Sync Protocol — Write As You Work (MANDATORY)
 
-**AWM is a shared global memory pool.** All hive agents read and write to the same memory database. The activation engine handles relevance via BM25, semantic embeddings, salience, and reranking — so your writes automatically surface when other agents recall related topics. **Always prefix concepts with your worker name** (e.g., `[Worker-A]`) so readers know who wrote it.
+**AWM is a shared global memory pool.** All hive agents read and write to the same memory database. The activation engine handles relevance via BM25 + semantic embeddings + reranker + **prefix-tag boost** (the `proj=`, `topic=`, `intent=`, `person=` tag format) — so well-tagged writes surface reliably when other agents recall related topics. **Always prefix concepts with your worker name** (e.g., `[Worker-A]`) so readers know who wrote it.
+
+**Required structured fields on every cross-agent write:**
+
+| Field | Format | Example |
+|---|---|---|
+| `project` | project this work belongs to | `"AgentSynapse"`, `"EquiHub"`, `"AWM"` |
+| `topic` | one specific area word | `"auth-jwt"`, `"period-close"`, `"hc-import"` |
+| `intent` | `decision` / `finding` / `todo` / `question` / `context` | `"decision"` |
+| `confidence_level` | `verified` (tested) / `observed` (read) / `assumed` | `"verified"` |
+| `memory_class` | `canonical` for shared writes other workers must recall; `working` otherwise | `"canonical"` |
+| `tags` | extra prefix-tags for IDs/dates/people | `["shared", "person=Robert", "date=2026-05-11"]` |
 
 Write to AWM proactively when you:
 
-| Event | What to Write | Tags |
-|-------|--------------|------|
-| **Find a dependency** | What depends on what | `shared, dependency, component/<name>` |
-| **Make a decision** | What was decided and why | `shared, decision, component/<name>` |
-| **Hit a blocker** | What's blocked and what's needed | `shared, blocker, component/<name>` |
-| **Discover something surprising** | The unexpected behavior/pattern | `shared, finding, component/<name>` |
-| **Change an API/interface** | What changed and what callers need to update | `shared, breaking-change, component/<name>` |
+| Event | What to write | intent |
+|-------|---------------|--------|
+| **Find a dependency** | What depends on what + file paths | `finding` |
+| **Make a decision** | What was decided + why (include the reason — without it the rule can't be applied to edge cases) | `decision` |
+| **Hit a blocker** | What's blocked + what's needed to unblock | `todo` |
+| **Discover something surprising** | The unexpected behavior/pattern + which file revealed it | `finding` |
+| **Change an API/interface** | What changed + what callers need to update | `decision` |
 
-**Always prefix the concept with your worker name:**
+**Example — well-formed canonical write:**
 ```
 memory_write:
-  concept: "[Worker-A] Auth uses JWT not sessions"
-  content: "Decided JWT for auth tokens. Reason: compliance requirement. All auth code should use jwt.verify(), not req.session. Affects: middleware, login route, token refresh."
-  tags: ["shared", "decision", "auth"]
-  memory_class: canonical
-  event_type: "decision"
+  concept: "[Worker-A] Auth uses JWT not sessions per compliance"
+  content: "Decided JWT for auth tokens — compliance requirement (SOC2 Type II audit). All auth code MUST use jwt.verify() not req.session. Affects: middleware/auth.ts, routes/login.ts, routes/token-refresh.ts. Old session middleware removed in commit 9af31bc."
+  project: "AgentSynapse"
+  topic: "auth-jwt"
+  intent: "decision"
+  confidence_level: "verified"
+  source: "discussion"
+  memory_class: "canonical"
   decision_made: true
+  tags: ["shared", "person=Robert", "date=2026-05-11", "topic=compliance"]
 ```
 
-**All cross-agent writes MUST use `memory_class: canonical`** to bypass the salience filter and ensure other agents can recall them. Without this, AWM's salience scoring may discard shared context (score floor 0.7 for canonical vs default ~0.17 threshold).
+**All cross-agent writes MUST use `memory_class: canonical`** to bypass the salience filter and ensure other agents can recall them. Without this, AWM's salience scoring may discard shared context (score floor 0.7 for canonical vs default ~0.17 threshold). Tool-call labels alone (`["tool=bash", "tool=write"]`) are NOT enough — they don't trigger the prefix-tag retrieval boost.
 
 **Salience auto-promotion (defense in depth, AWM 0.7.5+):** even if you forget `memory_class: canonical`, two patterns auto-promote:
 - **User feedback** — content starting with "Robert said…", "Katherine directed…" etc. → canonical (floor 0.7)
