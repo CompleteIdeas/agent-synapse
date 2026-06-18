@@ -30,6 +30,11 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import * as http from 'node:http';
 import * as net from 'node:net';
 const WORKER_NAME = process.env.WORKER_NAME ?? 'worker';
+// WORKER_ROLE drives auto-/checkin role. Coordinator launchers must set
+// WORKER_ROLE='coordinator' (similarly 'dev-lead' for the dev-lead launcher).
+// Default 'worker' preserves backwards compat with worker spawn scripts that
+// don't set the env var.
+const WORKER_ROLE = process.env.WORKER_ROLE ?? 'worker';
 /** Find a free TCP port on 127.0.0.1. */
 function getFreePort() {
     return new Promise((resolve, reject) => {
@@ -115,7 +120,7 @@ async function main() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         name: WORKER_NAME,
-                        role: 'worker',
+                        role: WORKER_ROLE,
                         workspace: WORKSPACE,
                         channelUrl,
                     }),
