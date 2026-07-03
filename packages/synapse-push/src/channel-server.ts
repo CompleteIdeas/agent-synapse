@@ -57,7 +57,7 @@ async function main(): Promise<void> {
 
   // MCP server with claude/channel capability declared
   const server = new Server(
-    { name: 'awm', version: '0.1.0' },
+    { name: 'synapse-push', version: '0.1.0' },
     {
       capabilities: {
         experimental: { 'claude/channel': {} },
