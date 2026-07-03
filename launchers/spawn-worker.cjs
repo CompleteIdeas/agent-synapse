@@ -22,7 +22,8 @@ const IS_WINDOWS = process.platform === 'win32';
 
 const workerName = process.argv[2];
 const projectDir = process.argv[3];
-const task = process.argv.slice(4).join(' ');
+const FORCE_SPAWN = process.argv.includes('--force');
+const task = process.argv.slice(4).filter((a) => a !== '--force').join(' ');
 
 if (!workerName || !task) {
   console.log('Usage: node spawn-worker.cjs <worker-name> <project-dir> <task...>');
@@ -40,10 +41,18 @@ let workspaceName = 'DEFAULT';
 try {
   const wsConfig = JSON.parse(fs.readFileSync(path.join(synapseDir, 'synapse.workspaces.json'), 'utf8'));
   const workspaces = wsConfig.workspaces || {};
+  // Match when the worker's project dir IS a workspace root OR a subdirectory of one.
+  // (A worker spawned for C:\Users\robert\project\EquiHub belongs to the "work"
+  // workspace rooted at C:\Users\robert\project.) Longest matching root wins, so a
+  // more specific nested workspace would take precedence over a broader parent.
+  const target = resolvedDir.toLowerCase();
+  let bestLen = -1;
   for (const [, ws] of Object.entries(workspaces)) {
-    if (path.resolve(ws.projectDir).toLowerCase() === resolvedDir.toLowerCase()) {
+    const base = path.resolve(ws.projectDir).toLowerCase();
+    const isMatch = target === base || target.startsWith(base + path.sep);
+    if (isMatch && base.length > bestLen) {
       workspaceName = ws.name;
-      break;
+      bestLen = base.length;
     }
   }
 } catch { /* config read failed — use default */ }
@@ -93,6 +102,27 @@ const modelFlag = agentModel ? ` --model ${agentModel}` : '';
 // GA channel syntax: --channels plugin:awm@agentsynapse (no --dangerously-load-development-channels)
 const channelsFlag = channelsEnabled ? ` --channels plugin:awm@agentsynapse` : '';
 
+// ─── Preflight (2026-07-03 hardening, flaw 5): duplicate-process check ──────
+// Spawning a second session for a worker name that is already ALIVE in the
+// coordinator creates two Claude sessions fighting over one identity (double
+// claims, interleaved locks, duplicate commits). Refuse unless --force.
+// Coordinator unreachable → cannot verify → allow the spawn (fail-open so a
+// down coordinator never blocks bootstrapping the hive).
+async function findAliveDuplicate() {
+  try {
+    const res = await fetch('http://127.0.0.1:8400/status', { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const agents = Array.isArray(data.agents) ? data.agents : [];
+    return agents.find((a) =>
+      a && a.name === workerName &&
+      a.status !== 'dead' &&
+      (typeof a.seconds_since_seen !== 'number' || a.seconds_since_seen < 300)
+    ) || null;
+  } catch { return null; }
+}
+
+function launch() {
 if (IS_WINDOWS) {
   // Windows: generate .bat and launch via Windows Terminal
   const scriptPath = path.join(tmpDir, `spawn-${workerName.toLowerCase()}.bat`);
@@ -166,3 +196,22 @@ if (IS_WINDOWS) {
     console.log(JSON.stringify({ spawned: true, worker: workerName, task: task.slice(0, 100), fallback: 'background', log: logPath }));
   }
 }
+}
+
+(async () => {
+  if (!FORCE_SPAWN) {
+    const dup = await findAliveDuplicate();
+    if (dup) {
+      console.log(JSON.stringify({
+        spawned: false,
+        reason: 'duplicate-alive-agent',
+        worker: workerName,
+        existing_status: dup.status,
+        last_seen: dup.last_seen,
+        hint: 'An alive session already holds this worker name. Kill it first (kill-worker.cjs) or pass --force to spawn anyway.',
+      }));
+      process.exit(2);
+    }
+  }
+  launch();
+})();
