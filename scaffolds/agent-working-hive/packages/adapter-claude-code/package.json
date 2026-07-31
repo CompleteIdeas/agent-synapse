@@ -1,0 +1,16 @@
+{
+  "name": "@agent-working-hive/adapter-claude-code",
+  "version": "0.1.0",
+  "description": "Claude Code adapter for Agent-Working-Hive",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@agent-working-hive/core": "^0.1.0",
+    "@agent-working-hive/transport-http": "^0.1.0"
+  }
+}

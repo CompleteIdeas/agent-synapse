@@ -1,0 +1,15 @@
+{
+  "name": "@agent-working-hive/profile-first-class-delivery",
+  "version": "0.1.0",
+  "description": "Long-task anti-drift execution profile for Agent-Working-Hive",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@agent-working-hive/core": "^0.1.0"
+  }
+}

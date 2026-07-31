@@ -47,9 +47,9 @@ if %errorlevel% equ 0 (
 :: Start AWM with coordination enabled
 set AWM_COORDINATION=true
 if "%USE_WT%"=="1" (
-    wt new-tab --title "AWM + Coordination (8400)" cmd /k "cd /d %SYNAPSE_DIR%\packages\awm && set AWM_COORDINATION=true && npx tsx src/index.ts"
+    wt new-tab --title "AWM + Coordination (8400)" cmd /k "cd /d %SYNAPSE_DIR%\packages\awm && set AWM_COORDINATION=true&& npx tsx src/index.ts"
 ) else (
-    start "AWM + Coordination (8400)" cmd /k "cd /d %SYNAPSE_DIR%\packages\awm && set AWM_COORDINATION=true && npx tsx src/index.ts"
+    start "AWM + Coordination (8400)" cmd /k "cd /d %SYNAPSE_DIR%\packages\awm && set AWM_COORDINATION=true&& npx tsx src/index.ts"
 )
 
 echo.

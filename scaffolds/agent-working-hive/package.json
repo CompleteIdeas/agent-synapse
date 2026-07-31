@@ -1,0 +1,23 @@
+{
+  "name": "agent-working-hive",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Runtime orchestration layer for multi-agent hives built on AgentWorkingMemory",
+  "type": "module",
+  "workspaces": [
+    "packages/core",
+    "packages/transport-http",
+    "packages/adapter-claude-code",
+    "packages/adapter-codex",
+    "packages/profile-first-class-delivery"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "Apache-2.0"
+}

@@ -10,6 +10,7 @@ echo.
 set LAUNCHER_DIR=%~dp0
 set SYNAPSE_DIR=%LAUNCHER_DIR%..
 set WORKSPACE=PERSONAL
+set CHANNELS_ENABLED=1
 
 :: Read PROJECT_DIR from synapse.workspaces.json
 for /f "delims=" %%a in ('node -e "process.stdout.write(require('%SYNAPSE_DIR:\=/%/synapse.workspaces.json').workspaces.personal.projectDir)" 2^>nul') do set "PROJECT_DIR=%%a"

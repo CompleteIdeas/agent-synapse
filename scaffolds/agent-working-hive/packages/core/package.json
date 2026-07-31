@@ -1,0 +1,12 @@
+{
+  "name": "@agent-working-hive/core",
+  "version": "0.1.0",
+  "description": "Runtime-agnostic coordinator loop, worker state machine, and policy execution for Agent-Working-Hive",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  }
+}

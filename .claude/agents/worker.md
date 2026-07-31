@@ -1,4 +1,6 @@
 ---
+name: worker
+description: Hive worker agent. Registers with the coordinator, claims assignments via /next, executes and verifies work, and polls for more.
 initialPrompt: "Begin hive protocol: follow your agent definition exactly. FIRST: run curl POST /next to http://127.0.0.1:8400/next with your name, role, and workspace to register with the coordinator (this is an HTTP call, NOT an MCP memory operation). THEN: memory_restore, recall context, check assignment from /next response, work assignments, poll for more between tasks. Sync with AWM during idle."
 effort: medium
 background: true

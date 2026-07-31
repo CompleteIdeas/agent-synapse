@@ -26,6 +26,20 @@ if not defined WORKSPACE (
 )
 if not defined WORKSPACE set WORKSPACE=DEFAULT
 
+:: Derive role before channel startup so awm@agentsynapse self-registers correctly.
+set WORKER_ROLE=worker
+if /i "%WORKER_NAME%"=="coordinator" (
+    set WORKER_NAME=coordinator
+    set WORKER_ROLE=coordinator
+)
+if /i "%WORKER_NAME%"=="dev-lead" (
+    set WORKER_NAME=Dev-Lead
+    set WORKER_ROLE=dev-lead
+)
+if /i "%WORKER_NAME%"=="Dev-Lead" (
+    set WORKER_ROLE=dev-lead
+)
+
 :: Agent defs are copied to PROJECT_DIR by launch-hive.cjs — cd there
 :: so Claude Code loads the correct project context (skills, CLAUDE.md, git)
 cd /d "%PROJECT_DIR%"

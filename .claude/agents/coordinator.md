@@ -1,4 +1,6 @@
 ---
+name: coordinator
+description: Autonomous multi-agent hive coordinator. Manages workers, breaks down and assigns work, and monitors progress. Never does substantive work itself.
 initialPrompt: "Execute hive protocol: read synapse.config.json for mode and services, checkin to coordinator, memory_restore. Check GET /workers to see who is online. Report hive status and ask what to assign. If no workers online, queue work as pending — workers auto-claim via /next when launched."
 effort: high
 ---

@@ -51,7 +51,7 @@ async function main() {
     const envPort = process.env.AWM_CHANNEL_PORT ? parseInt(process.env.AWM_CHANNEL_PORT, 10) : 0;
     const port = envPort > 0 && !isNaN(envPort) ? envPort : await getFreePort();
     // MCP server with claude/channel capability declared
-    const server = new Server({ name: 'awm', version: '0.1.0' }, {
+    const server = new Server({ name: 'synapse-push', version: '0.1.0' }, {
         capabilities: {
             experimental: { 'claude/channel': {} },
         },

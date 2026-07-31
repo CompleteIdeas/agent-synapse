@@ -1,287 +1,222 @@
-# Upgrade to AgentSynapse + AWM v0.6.0
+# Upgrade AgentSynapse + AWM (to latest)
 
-For staff upgrading from an older version of AWM and/or AgentSynapse. Your memory database is preserved — everything else gets rebuilt.
+For staff on an **old** version of AgentSynapse / AWM. Your **memory database is preserved**; everything else is rebuilt. If your version is *really* old, a clean **re-clone** is safer than `git pull` (the project went through a multi-repo → one-repo restructure).
+
+Current versions: **AgentSynapse** one-repo · **AWM submodule v0.8.6**.
 
 ---
 
-## What you're getting
+## If you're coming from an old version, here's what changed
 
-- **AWM v0.6.0** — memory taxonomy, query-adaptive retrieval, confidence on use, eval harness (4/4 benchmarks passing)
-- **AgentSynapse** — multi-agent coordination built into AWM (worker registration, task dispatch, file locking, decision propagation)
-- **Everything runs locally** — SQLite + ONNX models + Node.js. No cloud, no API keys.
+- **One repo.** Everything lives in `agent-synapse`, with AWM as a submodule in `packages/awm/`. The old separate AWM repo and separate `packages/coordinator` are gone.
+- **Coordination is built into AWM** (HTTP on **port 8400**). The old standalone coordinator (port 8410) is removed.
+- **Agents wake via a Claude Code channel plugin** (`awm@agentsynapse`) + push notifications — installed by `setup.bat`. This replaces the old global `npm i -g agent-working-memory` + `awm setup --global` flow. If your Claude org doesn't support channels, agents fall back to `/next` polling automatically.
+- **Launchers** are `launchers\start-all-work.bat` / `start-all-personal.bat` / `start-all.bat`, all delegating to `launch-hive.cjs` (cross-platform, reads `synapse.workspaces.json`).
+- **`synapse.workspaces.json`** is user-specific and gitignored (never committed).
 
 ---
 
 ## Prerequisites
 
-- **Node.js 20+** — check with `node --version`
-- **Git** — for cloning and submodules
-- **Claude Code** (`claude`) — [Install Claude Code](https://docs.anthropic.com/en/docs/claude-code)
-- **Windows Terminal** (recommended) — for tabbed agent windows
+- **Node.js 20+** (`node -v`)
+- **Git** (`git --version`)
+- **Claude Code v2.1.x+** (`claude --version`), signed into the **USEA Claude Team** account (`claude auth` — channels require the Team plan, not a personal account)
+- **Windows Terminal** (Win 11 default; Win 10 → Microsoft Store)
 
 ---
 
-## Step 1: Back up your memory database
+## Step 1 — Back up your memory database
 
-Your AWM memory database is a single SQLite file. Find it and copy it somewhere safe.
+Your AWM memory is one SQLite file. Find it via `AWM_DB_PATH` in your old config and copy it somewhere safe:
 
 ```bash
-# Default location (global install)
+# Old global install — common locations:
 cp "$(npm root -g)/agent-working-memory/memory.db" ~/memory-backup.db
-
-# Or find it — it's wherever AWM_DB_PATH points
-# Check your .mcp.json for the path:
-cat ~/.mcp.json
-# Look for AWM_DB_PATH in the env section
+#   or  ~/.claude/memory.db   or   C:\Users\<you>\AppData\Roaming\npm\node_modules\agent-working-memory\memory.db
 ```
 
-If you can't find it, check these common locations:
-- `~/.claude/memory.db`
-- `C:\Users\<you>\AppData\Roaming\npm\node_modules\agent-working-memory\memory.db`
-- The directory where you ran `awm setup`
-
-**Keep this backup until you've verified the upgrade works.**
+Also save your old `synapse.workspaces.json` if you have one. **Keep the backup until the upgrade is verified.**
 
 ---
 
-## Step 2: Uninstall the old AWM global package
+## Step 2 — Remove the OLD global AWM (only if you had it)
 
 ```bash
 npm uninstall -g agent-working-memory
 ```
 
-This removes the old CLI (`awm`) and MCP server. Your memory database file is NOT deleted — it's just a `.db` file on disk.
+Delete any old global `~/.mcp.json` AWM entry too — the new model is repo-local + the channel plugin. (Your `.db` file is not touched.)
 
 ---
 
-## Step 3: Clone AgentSynapse
+## Step 3 — Get the latest code
 
+**Really old version → fresh clone (recommended):**
 ```bash
-cd ~/projects  # or wherever you keep repos
+cd ~/projects   # or wherever you keep repos
 git clone https://github.com/CompleteIdeas/agent-synapse.git
 cd agent-synapse
 git submodule update --init
 ```
 
-This pulls AgentSynapse with AWM v0.6.0 as a submodule in `packages/awm/`.
+**Already on a recent clone → pull instead** (save your workspaces file first, it'll be removed by pull):
+```bash
+cp synapse.workspaces.json synapse.workspaces.json.bak
+git pull origin master
+git submodule update --init --recursive
+```
+
+> Requires access to the private **CompleteIdeas** GitHub org. Ask Robert if `git clone` 404s.
 
 ---
 
-## Step 4: Install dependencies
+## Step 4 — Install & build
 
 ```bash
+npm install                         # all workspaces: awm, task-manager, memory-client, synapse-push
+cd packages/synapse-push && npm run build && cd ../..   # build the push/channel server
+npm run build                       # build all packages (verify no errors)
+```
+
+If install or build fails:
+```bash
+node --version                      # must be 20+
+rm -rf node_modules packages/*/node_modules
 npm install
 ```
 
-This installs all packages (AWM, coordinator, task-manager) via npm workspaces.
-
-Verify the build:
-
-```bash
-npm run build
-```
-
-Should complete without errors.
-
 ---
 
-## Step 5: Restore your memory database
+## Step 5 — Restore your memory database
 
-Copy your backed-up database into the AWM package directory:
+Copy your backup to the path AWM uses (default `packages/awm/memory.db` — confirm via `AWM_DB_PATH` in `.claude/mcp.json`):
 
 ```bash
 cp ~/memory-backup.db packages/awm/memory.db
 ```
 
-AWM will automatically migrate the database schema on startup — new columns and tables are added without losing existing data.
+AWM **auto-migrates** the schema on startup (adds new columns/tables, no data loss).
 
 ---
 
-## Step 6: Install AWM v0.6.0 globally (for MCP + CLI)
+## Step 6 — Configure your workspace
 
 ```bash
-npm install -g agent-working-memory@0.6.0
+copy synapse.workspaces.example.json synapse.workspaces.json     # cp on macOS/Linux
 ```
 
-Then reconfigure Claude Code:
-
-```bash
-awm setup --global
-```
-
-This updates:
-- `~/.mcp.json` — MCP server configuration
-- `~/.claude/CLAUDE.md` — memory workflow instructions
-- `~/.claude/settings.json` — auto-checkpoint hooks
-
----
-
-## Step 7: Restart Claude Code
-
-Close and reopen Claude Code (or restart your terminal). The new MCP server loads automatically.
-
-Verify:
-
-```
-> What memory tools do you have?
-```
-
-You should see 14 tools: `memory_write`, `memory_recall`, `memory_restore`, `memory_feedback`, `memory_retract`, `memory_supersede`, `memory_stats`, `memory_checkpoint`, `memory_task_add`, `memory_task_update`, `memory_task_list`, `memory_task_next`, `memory_task_begin`, `memory_task_end`.
-
-Check your existing memories survived:
-
-```
-> How many memories do I have? (use memory_stats)
-```
-
----
-
-## Step 8: Verify the upgrade
-
-Run the test suite to make sure everything works:
-
-```bash
-cd agent-synapse/packages/awm
-
-# Quick checks
-npm run test:run       # 77 unit tests
-npm run test:mcp       # MCP protocol smoke test
-
-# Full benchmark (takes ~2 min, needs embedding model download on first run)
-npm run eval
-```
-
-Expected: all tests pass, eval shows 4/4 suites passing.
-
----
-
-## Step 9 (Optional): Set up multi-agent coordination
-
-If you want to run multiple Claude Code agents with coordination:
-
-### Configure workspaces
-
-```bash
-cp synapse.workspaces.example.json synapse.workspaces.json
-```
-
-Edit `synapse.workspaces.json` — set `projectDir` to your project path:
+Edit `synapse.workspaces.json` — set `projectDir` to **your** machine's project path. It stays local (gitignored), so it's never overwritten by future pulls. Example:
 
 ```json
 {
   "workspaces": {
-    "myproject": {
-      "name": "MYPROJECT",
-      "projectDir": "C:\\Users\\you\\your-project",
+    "work": {
+      "name": "WORK",
+      "projectDir": "C:\\Users\\YOUR_USERNAME\\project",
+      "memoryId": "work",
       "agents": [
-        { "name": "coordinator", "role": "coordinator", "delay": 0 },
-        { "name": "Worker-A", "role": "worker", "delay": 5 },
-        { "name": "Worker-B", "role": "worker", "delay": 8 }
+        { "name": "coordinator", "role": "coordinator", "delay": 0, "model": "opus" },
+        { "name": "Dev-Lead", "role": "dev-lead", "delay": 5, "model": "opus" },
+        { "name": "Worker-A", "role": "worker", "delay": 8 },
+        { "name": "Worker-B", "role": "worker", "delay": 11 },
+        { "name": "Worker-C", "role": "worker", "delay": 14 }
       ]
     }
   }
 }
 ```
 
-### Start the hive
+(Default per-role models live in `synapse.config.json`; override per-agent here with `"model"`.)
+
+---
+
+## Step 7 — Run setup (plugin + channels)
 
 ```bash
-# Start AWM with coordination enabled
-./launchers/start-services.bat
-
-# In separate terminals:
-./launchers/start-worker.bat coordinator
-./launchers/start-worker.bat Worker-A
-./launchers/start-worker.bat Worker-B
+.\setup.bat
 ```
 
-Or launch everything at once:
+This registers the **agentsynapse** plugin marketplace with Claude Code and installs the **`awm@agentsynapse`** channel plugin (push notifications that wake agents). Expect:
+
+```
+✔ Successfully added marketplace: agentsynapse
+✔ Successfully installed plugin: awm@agentsynapse
+```
+
+("Already installed" is fine.) If it fails, run it again or do it manually:
+```bash
+claude plugin marketplace add .\marketplace
+claude plugin install awm@agentsynapse
+```
+
+---
+
+## Step 8 — Verify your Claude Team account
 
 ```bash
-./launchers/start-all.bat
+claude auth      # must show your USEA email + "Claude Team" plan
 ```
 
-### Verify coordination
+Channels require the Team plan. The Team admin (Robert) has already set `allowedChannelPlugins` — no action needed from you.
+
+---
+
+## Step 9 — Launch the hive
 
 ```bash
-curl http://localhost:8400/health
-# Should show: {"status":"ok","coordination":true}
-
-curl http://localhost:8400/workers
-# Should list your connected workers
+.\launchers\start-all-work.bat        # 5 tabs: coordinator, dev-lead, 3 workers
+# or  .\launchers\start-all-personal.bat   /   .\launchers\start-all.bat  (interactive menu)
 ```
+
+`launch-hive.cjs` starts AWM (port 8400) if needed, loads the push plugin, and opens each agent in a Windows Terminal tab. Each tab should show `Listening for channel messages from: plugin:awm@agentsynapse`.
+
+Verify (in a separate terminal):
+```bash
+curl -s http://127.0.0.1:8400/health             # {"status":"ok",...}
+curl -s http://127.0.0.1:8400/workers            # 5 agents, "status":"idle"
+curl -s http://127.0.0.1:8400/channel/sessions   # each agent connected with a channel_id
+```
+
+Check your memories survived — in any agent tab: `How many memories do I have? (use memory_stats)`.
+
+---
+
+## Updating again later (already on a recent clone)
+
+```bash
+cd agent-synapse
+git pull origin master
+git submodule update --init --recursive
+npm install
+cd packages/synapse-push && npm run build && cd ../..
+claude plugin update awm@agentsynapse
+```
+Then relaunch the hive.
+
+---
+
+## Old → now, at a glance
+
+| | Old | Now |
+|---|---|---|
+| Repos | Separate AWM + coordinator repos | One repo (`agent-synapse`), AWM as submodule |
+| Coordination | Standalone coordinator (port 8410) | Built into AWM (port 8400) |
+| Agent wake-up | Poll `/next` | Channel plugin push (`awm@agentsynapse`), polling fallback |
+| Install | `npm i -g agent-working-memory` + `awm setup --global` | Repo-local + `setup.bat` (plugin) |
+| Launch | `start-services.bat` + per-worker | `launch-hive.cjs` via `start-all-*.bat` |
+| Config | hardcoded paths | `synapse.workspaces.json` (local, gitignored) |
+| AWM | ≤0.6.x | **0.8.6** (taxonomy, query-adaptive recall, plugin system, crash-consistency, `/timeline` `/decisions` `/health/deep`) |
 
 ---
 
 ## Troubleshooting
 
-### "memory tools not showing up"
+- **Plugin not found / agents don't wake** → re-run `setup.bat`; check `curl http://127.0.0.1:8400/channel/sessions`. `not on the approved channels allowlist` → personal (not Team) account, contact admin. Agents fall back to a 15-min heartbeat poll regardless.
+- **AWM not on 8400** → it starts with the hive; close everything and relaunch `start-all-work.bat`.
+- **npm install / build fails** → Node 20+, then `rm -rf node_modules packages/*/node_modules && npm install`.
+- **`synapse.workspaces.json not found`** → `copy synapse.workspaces.example.json synapse.workspaces.json` and edit paths.
+- **Coordination endpoints 404** → AWM didn't start with coordination; the launcher handles it, or manually `AWM_COORDINATION=true npx tsx packages/awm/src/index.ts`.
+- **Database migration errors** → restore from `~/memory-backup.db`; or delete `packages/awm/memory.db` to start fresh.
+- **Extra Claude windows / wrong CLI** → a `claude.bat` in your project dir shadows the real CLI; rename it.
 
-1. Check `~/.mcp.json` exists and has the AWM entry
-2. Restart Claude Code completely (not just a new conversation)
-3. Run `awm setup --global` again
-
-### "database migration errors"
-
-AWM auto-migrates on startup. If you see errors:
-
-1. Check your backup is intact (`~/memory-backup.db`)
-2. Delete `packages/awm/memory.db` and start fresh
-3. If you need the old data, open an issue — we can help migrate manually
-
-### "npm install fails"
-
-```bash
-# Clear node_modules and retry
-rm -rf node_modules packages/*/node_modules
-npm install
-```
-
-### "build fails"
-
-```bash
-node --version   # Must be 20+
-npm run build    # Check for TypeScript errors
-```
-
-### "coordination endpoints return 404"
-
-Make sure AWM is started with coordination enabled:
-
-```bash
-AWM_COORDINATION=true npx tsx packages/awm/src/index.ts
-```
-
-Or use the launcher: `./launchers/start-services.bat`
-
----
-
-## What changed in v0.6.0
-
-| Feature | Old | New |
-|---------|-----|-----|
-| Memory types | All untyped | Episodic / Semantic / Procedural auto-classification |
-| Retrieval | Same pipeline for all queries | Query-adaptive: targeted vs exploratory modes |
-| Confidence | Static (set on write) | Grows with retrieval (diminishing returns, cap 0.85) |
-| Consolidation | Redundancy threshold 0.85 | Lowered to 0.75 — catches paraphrases, improves retrieval by 30% |
-| Coordination | Separate package (port 8410) | Built into AWM (port 8400) — single service |
-| Task dispatch | FIFO only | Priority field (0-10) + blocked_by dependencies |
-| Completion | No verification | Workers must provide proof of work (result + optional commit SHA) |
-| Decision sharing | None | Automatic — decisions propagate to all agents via memory |
-| Benchmarks | No formal eval | 4-suite eval harness: `npm run eval` |
-| DB safety | WAL only | + busy_timeout, integrity check, hot backups, WAL checkpoint |
-
----
-
-## Quick reference
-
-| Command | Purpose |
-|---------|---------|
-| `awm setup --global` | Configure Claude Code for AWM |
-| `npm run build` | Build all packages |
-| `npm run eval` | Run benchmark suite (4 suites) |
-| `npm run test:mcp` | MCP smoke test |
-| `npm run test:run` | Unit tests (77) |
-| `./launchers/start-all.bat` | Launch full hive (AWM + workers) |
-| `curl localhost:8400/health` | Check AWM status |
-| `curl localhost:8400/workers` | List connected agents |
+See also: `docs/TEAM-SETUP.md` (fresh-install onboarding), `docs/troubleshoot-install.md`, `docs/update-march-2026.md`.

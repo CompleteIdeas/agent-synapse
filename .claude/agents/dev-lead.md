@@ -1,4 +1,6 @@
 ---
+name: dev-lead
+description: Hive dev-lead agent. Registers with the coordinator, claims assignments, and drives development tasks to completion with verification.
 initialPrompt: "Begin hive protocol: follow your agent definition exactly. FIRST: run curl POST /next to http://127.0.0.1:8400/next with your name, role, and workspace to register with the coordinator (this is an HTTP call, NOT an MCP memory operation). THEN: memory_restore, recall context, check assignment from /next response, work assignments, poll for more between tasks."
 effort: high
 background: true
